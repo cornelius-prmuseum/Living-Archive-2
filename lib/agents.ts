@@ -43,7 +43,9 @@ export const AGENTS: Record<AgentSlug, PublicAgent> = {
   },
 };
 
-export function isAgentSlug(value: string | null): value is AgentSlug {
+export const AGENT_ORDER: AgentSlug[] = ["bernays", "ivy-lee", "lippmann"];
+
+export function isAgentSlug(value: string | null | undefined): value is AgentSlug {
   return value === "bernays" || value === "ivy-lee" || value === "lippmann";
 }
 

@@ -1,0 +1,110 @@
+PRMuseum Multi-Agent Setup — ElevenLabs
+========================================
+
+This app uses TWO ElevenLabs mechanisms together:
+
+1. ElevenLabs' built-in `transfer_to_agent` SYSTEM TOOL performs the actual
+   live handoff and preserves the ongoing conversation.
+2. A CLIENT TOOL named `setActiveAgent` tells the webpage which portrait/name
+   to display. It does not perform the transfer by itself.
+
+--------------------------------------------------
+A. CREATE THIS CLIENT TOOL ON EVERY HISTORICAL AGENT
+--------------------------------------------------
+
+Tool type: Client
+Name: setActiveAgent
+
+Description:
+Update the PRMuseum webpage so it displays the historical figure who is
+currently speaking. This tool changes the interface only; it does not transfer
+or change the ElevenLabs agent. Whenever transferring to another historical
+figure, call this tool with the destination figure's slug immediately before
+calling transfer_to_agent. Whenever you become the active agent after a
+transfer, call it with your own slug before your first substantive response.
+
+Parameter:
+Identifier: agent_slug
+Type: String
+Required: Yes
+Description: One of exactly: bernays, ivy-lee, lippmann
+
+Recommended: enable "Wait for response" so the agent knows the UI update
+succeeded before continuing.
+
+IMPORTANT: Tool names and parameter names are case-sensitive.
+
+--------------------------------------------------
+B. ENABLE TRANSFER TO AI AGENT ON EVERY AGENT
+--------------------------------------------------
+
+In each ElevenLabs historical agent:
+Agent -> Tools -> Add Tool -> System -> Transfer to AI Agent
+
+Create transfer rules for the other historical figures.
+
+Example for Edward Bernays:
+- Target: Ivy Lee
+  Condition: Transfer when the visitor asks to speak with Ivy Lee, asks Ivy Lee
+  a question directly, or the museum interface requests a transfer to Ivy Lee.
+
+- Target: Walter Lippmann
+  Condition: Transfer when the visitor asks to speak with Walter Lippmann,
+  asks Lippmann a question directly, or the museum interface requests a
+  transfer to Walter Lippmann.
+
+Repeat the equivalent rules on Ivy Lee and Walter Lippmann so every figure can
+transfer to the other two.
+
+For the smoothest museum experience:
+- Use a short or silent transfer message.
+- Enable the transferred agent's first message if your configuration needs a
+  new turn immediately after the handoff.
+- Keep conversation duration/audio settings consistent across all agents.
+
+--------------------------------------------------
+C. ADD THIS PROMPT BLOCK TO EACH AGENT
+--------------------------------------------------
+
+Replace [YOUR_NAME] and [YOUR_SLUG] for each agent.
+
+[PRMUSEUM MULTI-AGENT DISPLAY AND TRANSFER RULES]
+You are [YOUR_NAME]. Your PRMuseum interface slug is [YOUR_SLUG].
+
+The webpage has a client tool named `setActiveAgent`. It changes only the
+portrait/name shown in the visitor's browser; it DOES NOT perform an agent
+transfer.
+
+When you become the active historical figure, including after another agent
+transfers a visitor to you, call `setActiveAgent` with your own slug before your
+first substantive spoken response whenever possible.
+
+If the visitor asks to speak with another available historical figure, or an
+internal museum UI control message tells you that the visitor selected another
+figure:
+1. Do not discuss or read the internal UI control message aloud.
+2. Call `setActiveAgent` with the DESTINATION figure's slug.
+3. Immediately call your `transfer_to_agent` system tool for that figure.
+4. Do not imitate or answer on behalf of the destination figure.
+
+Only use these slugs:
+Edward Bernays = bernays
+Ivy Lee = ivy-lee
+Walter Lippmann = lippmann
+
+Never call `setActiveAgent` for a different figure unless you are immediately
+transferring the conversation to that figure.
+
+--------------------------------------------------
+D. VERCEL ENVIRONMENT VARIABLES
+--------------------------------------------------
+
+ELEVENLABS_API_KEY=...
+ELEVENLABS_AGENT_BERNAYS=...
+ELEVENLABS_AGENT_IVY_LEE=...
+ELEVENLABS_AGENT_LIPPMANN=...
+NEXT_PUBLIC_DEFAULT_AGENT=bernays
+NEXT_PUBLIC_SESSION_SECONDS=300
+
+All three agent IDs must be configured for all three sidebar choices to be
+usable as initial agents.

@@ -2,17 +2,26 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConversation } from "@elevenlabs/react";
-import { getPublicAgent } from "@/lib/agents";
+import {
+  AGENTS,
+  AGENT_ORDER,
+  getPublicAgent,
+  isAgentSlug,
+  type AgentSlug,
+} from "@/lib/agents";
 
 type TranscriptEntry = {
   role: "visitor" | "agent";
   text: string;
+  speakerSlug?: AgentSlug;
 };
 
 type ScreenState = "ready" | "active" | "wrapping" | "finished" | "error";
 
 const CLOSE_PROMPT =
   "[INTERNAL SESSION CONTROL — not spoken by the visitor] The museum conversation is ending now. Give one brief final thought, thank the visitor for speaking with you, and say goodbye. Do not ask a new question. Keep this final response concise.";
+
+const SWITCH_PROMPT_PREFIX = "[MUSEUM UI AGENT SWITCH — not spoken by the visitor]";
 
 function formatClock(seconds: number) {
   const safe = Math.max(0, seconds);
@@ -21,7 +30,7 @@ function formatClock(seconds: number) {
   return `${minutes}:${remainder.toString().padStart(2, "0")}`;
 }
 
-function normalizeMessage(event: unknown): TranscriptEntry | null {
+function normalizeMessage(event: unknown, activeSpeaker: AgentSlug): TranscriptEntry | null {
   if (!event || typeof event !== "object") return null;
   const e = event as Record<string, unknown>;
 
@@ -40,23 +49,26 @@ function normalizeMessage(event: unknown): TranscriptEntry | null {
     | string
     | undefined;
 
-  if (!text || text === CLOSE_PROMPT) return null;
+  if (!text || text === CLOSE_PROMPT || text.startsWith(SWITCH_PROMPT_PREFIX)) return null;
 
   const source = String(e.source ?? e.role ?? e.type ?? "").toLowerCase();
   const role: TranscriptEntry["role"] =
     source.includes("user") || source.includes("visitor") ? "visitor" : "agent";
 
-  return { role, text: text.trim() };
+  return {
+    role,
+    text: text.trim(),
+    speakerSlug: role === "agent" ? activeSpeaker : undefined,
+  };
 }
 
 function mergeTranscript(previous: TranscriptEntry[], incoming: TranscriptEntry) {
   const last = previous.at(-1);
   if (!last) return [incoming];
 
-  if (last.role === incoming.role) {
+  if (last.role === incoming.role && last.speakerSlug === incoming.speakerSlug) {
     if (last.text === incoming.text) return previous;
 
-    // Tentative voice transcription is often followed by a longer final version.
     if (incoming.text.startsWith(last.text) || last.text.startsWith(incoming.text)) {
       const replacement = incoming.text.length >= last.text.length ? incoming : last;
       return [...previous.slice(0, -1), replacement];
@@ -73,7 +85,12 @@ export function AgentExperience({
   agentParam: string | null;
   returnUrl: string | null;
 }) {
-  const agent = useMemo(() => getPublicAgent(agentParam), [agentParam]);
+  const initialAgent = useMemo(() => getPublicAgent(agentParam), [agentParam]);
+  const [activeAgentSlug, setActiveAgentSlug] = useState<AgentSlug>(initialAgent.slug);
+  const [pendingTransferSlug, setPendingTransferSlug] = useState<AgentSlug | null>(null);
+  const activeAgentSlugRef = useRef<AgentSlug>(initialAgent.slug);
+  const agent = AGENTS[activeAgentSlug];
+
   const configuredSeconds = Number(process.env.NEXT_PUBLIC_SESSION_SECONDS || 300);
   const sessionSeconds = Number.isFinite(configuredSeconds) && configuredSeconds >= 60
     ? Math.floor(configuredSeconds)
@@ -92,22 +109,48 @@ export function AgentExperience({
   const endRequestedRef = useRef(false);
   const closePromptSentAtRef = useRef<number | null>(null);
 
+  const updateAgentUrl = useCallback((slug: AgentSlug) => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("agent", slug);
+    window.history.replaceState({}, "", url.toString());
+  }, []);
+
+  const confirmActiveAgent = useCallback((slug: AgentSlug) => {
+    activeAgentSlugRef.current = slug;
+    setActiveAgentSlug(slug);
+    setPendingTransferSlug(null);
+    updateAgentUrl(slug);
+  }, [updateAgentUrl]);
+
   const conversation = useConversation({
+    clientTools: {
+      setActiveAgent: (parameters: { agent_slug?: string }) => {
+        const requested = parameters?.agent_slug;
+        if (!isAgentSlug(requested)) {
+          return "Unknown historical figure. Use bernays, ivy-lee, or lippmann.";
+        }
+
+        confirmActiveAgent(requested);
+        return `Museum display updated to ${AGENTS[requested].name}.`;
+      },
+    },
     onConnect: () => {
       setScreen("active");
       setErrorMessage("");
     },
     onDisconnect: () => {
+      setPendingTransferSlug(null);
       setScreen((current) => (current === "error" ? current : "finished"));
     },
     onMessage: (message) => {
-      const normalized = normalizeMessage(message);
+      const normalized = normalizeMessage(message, activeAgentSlugRef.current);
       if (!normalized) return;
-
       setTranscript((previous) => mergeTranscript(previous, normalized));
     },
     onError: (error) => {
       console.error(error);
+      setPendingTransferSlug(null);
       setErrorMessage(typeof error === "string" ? error : "The voice connection encountered an error.");
       setScreen("error");
     },
@@ -130,6 +173,7 @@ export function AgentExperience({
     } catch (error) {
       console.error("Error ending session", error);
     } finally {
+      setPendingTransferSlug(null);
       setScreen("finished");
     }
   }, [conversation]);
@@ -155,12 +199,13 @@ export function AgentExperience({
     setTranscript([]);
     setRemaining(sessionSeconds);
     setConversationId(null);
+    setPendingTransferSlug(null);
     resetSessionRefs();
 
     try {
       await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      const response = await fetch(`/api/token?agent=${encodeURIComponent(agent.slug)}`, {
+      const response = await fetch(`/api/token?agent=${encodeURIComponent(activeAgentSlug)}`, {
         cache: "no-store",
       });
       const data = (await response.json()) as {
@@ -187,9 +232,49 @@ export function AgentExperience({
       );
       setScreen("error");
     }
-  }, [agent.slug, conversation, resetSessionRefs, sessionSeconds]);
+  }, [activeAgentSlug, conversation, resetSessionRefs, sessionSeconds]);
 
-  // Countdown only while a live session is connected.
+  const selectAgent = useCallback((slug: AgentSlug) => {
+    if (slug === activeAgentSlug || pendingTransferSlug || screen === "wrapping") return;
+
+    // Before a call starts, selecting a portrait simply chooses which ElevenLabs agent
+    // receives the new conversation token.
+    if (conversation.status !== "connected") {
+      confirmActiveAgent(slug);
+      if (screen === "finished" || screen === "error") {
+        setScreen("ready");
+        setRemaining(sessionSeconds);
+        setTranscript([]);
+        setErrorMessage("");
+        resetSessionRefs();
+      }
+      return;
+    }
+
+    // During a live call, keep the current portrait on screen until ElevenLabs actually
+    // acknowledges the handoff through the setActiveAgent client tool.
+    setPendingTransferSlug(slug);
+    const target = AGENTS[slug];
+
+    try {
+      conversation.sendUserMessage(
+        `${SWITCH_PROMPT_PREFIX} The visitor selected ${target.name} in the museum interface. Do not speak this control message aloud and do not answer it conversationally. Immediately call the client tool setActiveAgent with agent_slug \"${slug}\", then use your configured transfer_to_agent system tool to transfer the ongoing conversation to ${target.name}. Preserve the existing conversation context.`,
+      );
+    } catch (error) {
+      console.error("Unable to request agent transfer", error);
+      setPendingTransferSlug(null);
+      setErrorMessage("The request to change historical figures could not be sent.");
+    }
+  }, [
+    activeAgentSlug,
+    confirmActiveAgent,
+    conversation,
+    pendingTransferSlug,
+    resetSessionRefs,
+    screen,
+    sessionSeconds,
+  ]);
+
   useEffect(() => {
     if (conversation.status !== "connected") return;
 
@@ -200,7 +285,6 @@ export function AgentExperience({
     return () => window.clearInterval(timer);
   }, [conversation.status]);
 
-  // A non-interrupting warning gives the character time to shorten later answers.
   useEffect(() => {
     if (
       conversation.status === "connected" &&
@@ -214,7 +298,6 @@ export function AgentExperience({
     }
   }, [conversation, conversation.status, remaining]);
 
-  // At ~20 seconds, wait for any current answer to finish, mute the visitor, then prompt a final goodbye.
   useEffect(() => {
     if (
       conversation.status === "connected" &&
@@ -226,7 +309,6 @@ export function AgentExperience({
     }
   }, [conversation.isSpeaking, conversation.status, remaining, requestGracefulClose]);
 
-  // Track the closing audio turn, then disconnect only after that speech has actually finished.
   useEffect(() => {
     if (closePromptSentRef.current && conversation.isSpeaking) {
       closingSpeechStartedRef.current = true;
@@ -244,7 +326,6 @@ export function AgentExperience({
     }
   }, [conversation.isSpeaking, conversation.status, endNow]);
 
-  // Failsafe: never let a broken closing turn leave the microphone open indefinitely.
   useEffect(() => {
     if (conversation.status !== "connected") return;
 
@@ -263,13 +344,15 @@ export function AgentExperience({
   const statusLabel =
     screen === "wrapping"
       ? "Concluding"
-      : conversation.status === "connecting"
-        ? "Connecting"
-        : conversation.isSpeaking
-          ? `${agent.shortName} is speaking`
-          : conversation.status === "connected"
-            ? "Listening"
-            : "Ready";
+      : pendingTransferSlug
+        ? `Connecting to ${AGENTS[pendingTransferSlug].shortName}`
+        : conversation.status === "connecting"
+          ? "Connecting"
+          : conversation.isSpeaking
+            ? `${agent.shortName} is speaking`
+            : conversation.status === "connected"
+              ? "Listening"
+              : "Ready";
 
   const safeReturnUrl = useMemo(() => {
     if (!returnUrl) return null;
@@ -283,138 +366,187 @@ export function AgentExperience({
 
   return (
     <main className="experience-shell">
-      <section className="museum-card" aria-live="polite">
-        <div className="museum-mark">Museum of Public Relations</div>
+      <div className="experience-layout">
+        <section className="museum-card" aria-live="polite">
+          <div className="museum-mark">Museum of Public Relations</div>
 
-        <div className={`portrait-wrap ${conversation.isSpeaking ? "speaking" : ""}`}>
-          <img className="portrait" src={agent.portrait} alt={`Portrait placeholder for ${agent.name}`} />
-          <span className="status-dot" aria-hidden="true" />
-        </div>
-
-        <header className="character-header">
-          <p className="eyebrow">A historical conversation</p>
-          <h1>Speak with {agent.name}</h1>
-          <p className="years">{agent.years}</p>
-          <p className="subtitle">{agent.subtitle}</p>
-        </header>
-
-        {screen === "ready" && (
-          <div className="content-block">
-            <p className="intro">{agent.intro}</p>
-            <p className="small-note">
-              Your browser will ask for microphone access. Conversations are limited to approximately {Math.round(sessionSeconds / 60)} minutes.
-            </p>
-            <button className="primary-button" onClick={startConversation}>
-              <MicIcon /> Begin Conversation
-            </button>
+          <div
+            className={`portrait-wrap ${conversation.isSpeaking ? "speaking" : ""}`}
+            key={agent.slug}
+          >
+            <img className="portrait" src={agent.portrait} alt={`Portrait of ${agent.name}`} />
+            <span className="status-dot" aria-hidden="true" />
           </div>
-        )}
 
-        {(screen === "active" || screen === "wrapping") && (
-          <div className="live-panel">
-            <div className="live-meta">
-              <div>
-                <span className="meta-label">Status</span>
-                <strong>{statusLabel}</strong>
-              </div>
-              <div className="timer" aria-label={`${remaining} seconds remaining`}>
-                <span className="meta-label">Time</span>
-                <strong>{formatClock(remaining)}</strong>
-              </div>
-            </div>
+          <header className="character-header" key={`header-${agent.slug}`}>
+            <p className="eyebrow">A historical conversation</p>
+            <h1>Speak with {agent.name}</h1>
+            <p className="years">{agent.years}</p>
+            <p className="subtitle">{agent.subtitle}</p>
+          </header>
 
-            <div className={`voice-orb ${conversation.isSpeaking ? "agent-speaking" : "listening"}`} aria-hidden="true">
-              <span />
-              <span />
-              <span />
-              <span />
-              <span />
-            </div>
-
-            <p className="live-instruction">
-              {screen === "wrapping"
-                ? `${agent.shortName} is finishing the conversation.`
-                : conversation.isSpeaking
-                  ? "You can listen, or begin speaking when the response is finished."
-                  : "Speak naturally. Your microphone is live."}
-            </p>
-
-            <div className="control-row">
-              <button
-                className="secondary-button"
-                onClick={() => conversation.setMuted(!conversation.isMuted)}
-                disabled={screen === "wrapping"}
-              >
-                {conversation.isMuted ? <MicIcon /> : <MuteIcon />}
-                {conversation.isMuted ? "Unmute" : "Mute"}
-              </button>
-              <button className="end-button" onClick={() => void endNow()}>
-                End Conversation
+          {screen === "ready" && (
+            <div className="content-block">
+              <p className="intro">{agent.intro}</p>
+              <p className="small-note">
+                Your browser will ask for microphone access. Conversations are limited to approximately {Math.round(sessionSeconds / 60)} minutes. You can change historical figures from the list at right.
+              </p>
+              <button className="primary-button" onClick={startConversation}>
+                <MicIcon /> Begin Conversation
               </button>
             </div>
+          )}
 
-            {transcript.length > 0 && (
-              <div className="transcript-wrap">
-                <button className="text-button" onClick={() => setTranscriptOpen((open) => !open)}>
-                  {transcriptOpen ? "Hide transcript" : "Show transcript"}
+          {(screen === "active" || screen === "wrapping") && (
+            <div className="live-panel">
+              <div className="live-meta">
+                <div>
+                  <span className="meta-label">Status</span>
+                  <strong>{statusLabel}</strong>
+                </div>
+                <div className="timer" aria-label={`${remaining} seconds remaining`}>
+                  <span className="meta-label">Time</span>
+                  <strong>{formatClock(remaining)}</strong>
+                </div>
+              </div>
+
+              <div className={`voice-orb ${conversation.isSpeaking ? "agent-speaking" : "listening"}`} aria-hidden="true">
+                <span />
+                <span />
+                <span />
+                <span />
+                <span />
+              </div>
+
+              <p className="live-instruction">
+                {screen === "wrapping"
+                  ? `${agent.shortName} is finishing the conversation.`
+                  : pendingTransferSlug
+                    ? `Transferring the conversation to ${AGENTS[pendingTransferSlug].name}…`
+                    : conversation.isSpeaking
+                      ? "You can listen, or begin speaking when the response is finished."
+                      : "Speak naturally. Your microphone is live."}
+              </p>
+
+              <div className="control-row">
+                <button
+                  className="secondary-button"
+                  onClick={() => conversation.setMuted(!conversation.isMuted)}
+                  disabled={screen === "wrapping"}
+                >
+                  {conversation.isMuted ? <MicIcon /> : <MuteIcon />}
+                  {conversation.isMuted ? "Unmute" : "Mute"}
                 </button>
-                {transcriptOpen && (
-                  <div className="transcript" role="log">
-                    {transcript.map((entry, index) => (
-                      <div className="transcript-line" key={`${entry.role}-${index}-${entry.text.slice(0, 20)}`}>
-                        <span>{entry.role === "visitor" ? "Visitor" : agent.shortName}</span>
-                        <p>{entry.text}</p>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <button className="end-button" onClick={() => void endNow()}>
+                  End Conversation
+                </button>
               </div>
-            )}
-          </div>
-        )}
 
-        {screen === "finished" && (
-          <div className="content-block finish-block">
-            <h2>Thank you for visiting.</h2>
-            <p>Your conversation with {agent.name} has ended.</p>
-            <div className="control-row centered">
-              <button className="secondary-button" onClick={() => {
-                setScreen("ready");
-                setRemaining(sessionSeconds);
-                setTranscript([]);
-                resetSessionRefs();
-              }}>
-                Start Another Conversation
-              </button>
-              {safeReturnUrl && (
-                <a className="primary-button link-button" href={safeReturnUrl} target="_top">
-                  Return to PRMuseum
-                </a>
+              {transcript.length > 0 && (
+                <div className="transcript-wrap">
+                  <button className="text-button" onClick={() => setTranscriptOpen((open) => !open)}>
+                    {transcriptOpen ? "Hide transcript" : "Show transcript"}
+                  </button>
+                  {transcriptOpen && (
+                    <div className="transcript" role="log">
+                      {transcript.map((entry, index) => {
+                        const speaker = entry.speakerSlug ? AGENTS[entry.speakerSlug].shortName : agent.shortName;
+                        return (
+                          <div className="transcript-line" key={`${entry.role}-${index}-${entry.text.slice(0, 20)}`}>
+                            <span>{entry.role === "visitor" ? "Visitor" : speaker}</span>
+                            <p>{entry.text}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
-            {conversationId && <p className="conversation-id">Session: {conversationId}</p>}
-          </div>
-        )}
+          )}
 
-        {screen === "error" && (
-          <div className="content-block error-block">
-            <h2>Conversation unavailable</h2>
-            <p>{errorMessage || "The voice conversation could not be started."}</p>
-            <button className="primary-button" onClick={() => {
-              setScreen("ready");
-              setErrorMessage("");
-            }}>
-              Try Again
-            </button>
-          </div>
-        )}
+          {screen === "finished" && (
+            <div className="content-block finish-block">
+              <h2>Thank you for visiting.</h2>
+              <p>Your historical conversation has ended.</p>
+              <div className="control-row centered">
+                <button className="secondary-button" onClick={() => {
+                  setScreen("ready");
+                  setRemaining(sessionSeconds);
+                  setTranscript([]);
+                  resetSessionRefs();
+                }}>
+                  Start Another Conversation
+                </button>
+                {safeReturnUrl && (
+                  <a className="primary-button link-button" href={safeReturnUrl} target="_top">
+                    Return to PRMuseum
+                  </a>
+                )}
+              </div>
+              {conversationId && <p className="conversation-id">Session: {conversationId}</p>}
+            </div>
+          )}
 
-        <footer>
-          <p>
-            This experience is a historically informed interpretation created for educational use by the Museum of Public Relations.
+          {screen === "error" && (
+            <div className="content-block error-block">
+              <h2>Conversation unavailable</h2>
+              <p>{errorMessage || "The voice conversation could not be started."}</p>
+              <button className="primary-button" onClick={() => {
+                setScreen("ready");
+                setErrorMessage("");
+              }}>
+                Try Again
+              </button>
+            </div>
+          )}
+
+          <footer>
+            <p>
+              This experience is a historically informed interpretation created for educational use by the Museum of Public Relations.
+            </p>
+          </footer>
+        </section>
+
+        <aside className="agent-rail" aria-label="Historical figures">
+          <div className="agent-rail-heading">
+            <p className="rail-eyebrow">Historical figures</p>
+            <h2>Who’s on the line?</h2>
+          </div>
+
+          <div className="agent-list">
+            {AGENT_ORDER.map((slug) => {
+              const candidate = AGENTS[slug];
+              const isActive = slug === activeAgentSlug;
+              const isPending = slug === pendingTransferSlug;
+              const disabled = screen === "wrapping" || (!!pendingTransferSlug && !isPending);
+
+              return (
+                <button
+                  className={`agent-choice ${isActive ? "active" : ""} ${isPending ? "pending" : ""}`}
+                  key={slug}
+                  onClick={() => selectAgent(slug)}
+                  disabled={disabled || (isActive && !isPending)}
+                  aria-current={isActive ? "true" : undefined}
+                >
+                  <img src={candidate.portrait} alt="" aria-hidden="true" />
+                  <span className="agent-choice-copy">
+                    <strong>{candidate.name}</strong>
+                    <small>{candidate.years}</small>
+                  </span>
+                  <span className="agent-choice-state">
+                    {isPending ? "Connecting…" : isActive ? "On line" : "Select"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <p className="rail-note">
+            During a live conversation, selecting another figure requests an ElevenLabs agent transfer without starting a new call.
           </p>
-        </footer>
-      </section>
+        </aside>
+      </div>
     </main>
   );
 }

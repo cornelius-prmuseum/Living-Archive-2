@@ -194,3 +194,16 @@ app/api/token/route.ts         Private ElevenLabs Agent ID mapping
 wordpress-embed.html           WordPress embed
 .env.local                     Local secrets (never commit)
 ```
+
+## Multi-agent sidebar and live transfers
+
+This version includes a right-hand historical-figure selector. Before a call,
+selecting a figure changes which agent token is requested. During a live call,
+selecting a different figure sends an internal transfer request to the current
+agent; the current ElevenLabs agent must have the built-in `transfer_to_agent`
+system tool configured for the destination.
+
+The page also registers a client tool named `setActiveAgent`. Add that exact
+client tool to every ElevenLabs historical agent so an agent-driven transfer
+can update the main portrait, title, status, URL and transcript attribution.
+See `ELEVENLABS-MULTI-AGENT-SETUP.txt` for the exact dashboard and prompt setup.
