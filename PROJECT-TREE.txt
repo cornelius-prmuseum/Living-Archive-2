@@ -1,0 +1,26 @@
+prmuseum-historical-voice-app/
+├── app/
+│   ├── api/token/route.ts
+│   ├── globals.css
+│   ├── layout.tsx
+│   └── page.tsx
+├── components/
+│   ├── AgentExperience.tsx
+│   └── HistoricalVoiceApp.tsx
+├── lib/
+│   └── agents.ts
+├── public/
+│   └── portraits/
+│       ├── bernays.svg
+│       ├── ivy-lee.svg
+│       └── lippmann.svg
+├── .env.example
+├── .gitignore
+├── ELEVENLABS-PROMPT-ADDON.txt
+├── next-env.d.ts
+├── next.config.ts
+├── package.json
+├── PROJECT-TREE.txt
+├── README.md
+├── tsconfig.json
+└── wordpress-embed.html

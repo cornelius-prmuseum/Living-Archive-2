@@ -1,0 +1,34 @@
+<!-- Replace YOUR-APP.vercel.app with your Vercel production domain. -->
+<div class="prmuseum-voice-embed">
+  <iframe
+    src="https://YOUR-APP.vercel.app/?agent=bernays&ref=https%3A%2F%2Fthemuseumofstg.wpengine.com%2Fask-bernays%2F"
+    title="Speak with Edward Bernays"
+    allow="microphone; autoplay"
+    loading="eager"
+    referrerpolicy="strict-origin-when-cross-origin"
+  ></iframe>
+</div>
+
+<style>
+.prmuseum-voice-embed {
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.prmuseum-voice-embed iframe {
+  display: block;
+  width: 100%;
+  height: min(900px, 92vh);
+  min-height: 720px;
+  border: 0;
+  overflow: hidden;
+}
+
+@media (max-width: 600px) {
+  .prmuseum-voice-embed iframe {
+    height: 100svh;
+    min-height: 680px;
+  }
+}
+</style>
