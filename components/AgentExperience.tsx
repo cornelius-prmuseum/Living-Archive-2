@@ -157,6 +157,11 @@ export function AgentExperience({
   const subtitleBufferRef = useRef("");
   const subtitleTurnActiveRef = useRef(false);
   const alignmentSeenInTurnRef = useRef(false);
+  // ElevenLabs emits audio alignment in multiple packets. The character timing
+  // inside each packet is local to that packet, so we keep a cumulative speech
+  // cursor to prevent separate packets from being revealed on top of each other.
+  const subtitlePacketCursorMsRef = useRef(0);
+  const subtitleTurnStartedAtRef = useRef<number | null>(null);
 
   const clearSubtitleTimers = useCallback(() => {
     subtitleTimersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -168,6 +173,8 @@ export function AgentExperience({
     subtitleBufferRef.current = "";
     subtitleTurnActiveRef.current = false;
     alignmentSeenInTurnRef.current = false;
+    subtitlePacketCursorMsRef.current = 0;
+    subtitleTurnStartedAtRef.current = null;
     if (clearVisible) setSubtitle(null);
   }, [clearSubtitleTimers]);
 
@@ -213,11 +220,15 @@ export function AgentExperience({
     const alignment = normalizeAudioAlignment(payload);
     if (!alignment || alignment.chars.length === 0) return;
 
+    const now = performance.now();
+
     if (!subtitleTurnActiveRef.current) {
       clearSubtitleTimers();
       subtitleBufferRef.current = "";
       subtitleTurnActiveRef.current = true;
       alignmentSeenInTurnRef.current = true;
+      subtitlePacketCursorMsRef.current = 0;
+      subtitleTurnStartedAtRef.current = now;
       setSubtitle(null);
     } else {
       alignmentSeenInTurnRef.current = true;
@@ -225,11 +236,34 @@ export function AgentExperience({
 
     const chars = alignment.chars;
     const starts = alignment.starts;
+    const durations = alignment.durations;
     const speakerSlug = activeAgentSlugRef.current;
+    const turnStartedAt = subtitleTurnStartedAtRef.current ?? now;
+    const elapsedMs = Math.max(0, now - turnStartedAt);
 
-    // Reveal whole word/space runs according to the character timing that ElevenLabs
-    // attaches to the audio. This keeps captions visually smooth while still
-    // following the spoken audio rather than the LLM text-generation speed.
+    // IMPORTANT: char_start_times_ms is local to each alignment packet, not one
+    // global clock for the entire answer. Queue this packet after the prior one.
+    // If a packet arrives late, start it immediately rather than trying to catch up
+    // by interleaving its words with text that is already on screen.
+    const firstStartMs = Number(starts[0] ?? 0);
+    const packetBaseMs = Math.max(subtitlePacketCursorMsRef.current, elapsedMs);
+
+    let packetEndMs = 0;
+    for (let i = 0; i < chars.length; i += 1) {
+      const localStart = Math.max(0, Number(starts[i] ?? firstStartMs) - firstStartMs);
+      const duration = Math.max(0, Number(durations[i] ?? 0));
+      packetEndMs = Math.max(packetEndMs, localStart + duration);
+    }
+
+    // Some payloads omit durations. Give the final character a small tail so the
+    // next packet cannot begin at exactly the same instant as the last word.
+    if (packetEndMs <= 0) {
+      packetEndMs = Math.max(0, Number(starts.at(-1) ?? firstStartMs) - firstStartMs) + 40;
+    }
+    subtitlePacketCursorMsRef.current = packetBaseMs + packetEndMs;
+
+    // Reveal word/space runs using the timing inside this packet, offset by the
+    // cumulative packet cursor established above.
     let index = 0;
     while (index < chars.length) {
       const whitespace = /\s/.test(chars[index]);
@@ -237,7 +271,10 @@ export function AgentExperience({
       while (end < chars.length && /\s/.test(chars[end]) === whitespace) end += 1;
 
       const chunk = chars.slice(index, end).join("");
-      const delay = Math.max(0, Number(starts[index] ?? 0));
+      const localStart = Math.max(0, Number(starts[index] ?? firstStartMs) - firstStartMs);
+      const targetMs = packetBaseMs + localStart;
+      const delay = Math.max(0, targetMs - elapsedMs);
+
       const timer = window.setTimeout(() => {
         subtitleBufferRef.current += chunk;
         setSubtitle({ text: subtitleBufferRef.current, speakerSlug });
