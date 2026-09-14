@@ -3,6 +3,7 @@ import {
   getAiDialogueEnabled,
   getAiDialogueMaxTurns,
   getEnabledAgentSlugs,
+  getEnabledDialogueAgentSlugs,
 } from "@/lib/serverAgents";
 
 type PageProps = {
@@ -16,6 +17,7 @@ export default async function Home({ searchParams }: PageProps) {
   const agentParam = typeof params.agent === "string" ? params.agent : null;
   const returnUrl = typeof params.ref === "string" ? params.ref : null;
   const enabledAgentSlugs = getEnabledAgentSlugs();
+  const dialogueAgentSlugs = getEnabledDialogueAgentSlugs();
   const aiDialogueEnabled = getAiDialogueEnabled();
   const aiDialogueMaxTurns = getAiDialogueMaxTurns();
 
@@ -24,6 +26,7 @@ export default async function Home({ searchParams }: PageProps) {
       agentParam={agentParam}
       returnUrl={returnUrl}
       enabledAgentSlugs={enabledAgentSlugs}
+      dialogueAgentSlugs={dialogueAgentSlugs}
       aiDialogueEnabled={aiDialogueEnabled}
       aiDialogueMaxTurns={aiDialogueMaxTurns}
     />

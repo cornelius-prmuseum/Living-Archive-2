@@ -1,78 +1,79 @@
-PRMuseum AI-to-AI Dialogue — v4.5
-=================================
+PRMUSEUM v5 — DEDICATED TWO-AGENT DISCUSSION SETUP
 
-Architecture
-------------
-AI dialogue no longer uses transfer_to_agent. It runs two independent ElevenLabs
-voice conversations at the same time. The current visitor conversation is the
-primary session; a second hidden ConversationProvider starts the selected partner.
+This version does NOT use transfer_to_agent for AI-to-AI discussion.
+AI Discussion opens two independent ElevenLabs conversations at the same time.
+The webpage waits for one speaker to finish, relays the completed text to the other,
+and changes the portrait only when that specific conversation instance is speaking.
 
-The app waits until one voice has completely stopped speaking, captures the
-completed response, then sends that text to the other session with sendUserMessage().
-No transfer request is issued during AI dialogue.
+1. CREATE DIALOGUE COPIES IN ELEVENLABS
 
-Vercel
-------
-Enable:
+Create a dialogue copy of each historical agent you want available:
+- Edward Bernays — Dialogue
+- Ivy Lee — Dialogue
+- Walter Lippmann — Dialogue
+- Arthur W. Page — Dialogue
+
+The dialogue copy can reuse the same voice, knowledge base, historical/persona prompt,
+and pronunciation settings as the visitor-facing version.
+
+REMOVE from each Dialogue agent:
+- First Message / greeting (leave it blank)
+- transfer_to_agent
+- syncActiveAgent
+- setActiveAgent
+- any prompt instruction that tells the agent to transfer, greet a visitor, or update the webpage
+
+Suggested dialogue-only instruction:
+
+[HISTORICAL ROUNDTABLE MODE]
+You are participating in a historical discussion with another historical figure.
+You will receive the other speaker's remarks as text.
+Respond directly to the argument from your own historical perspective.
+Do not greet or address a museum visitor.
+Do not attempt to transfer the conversation.
+Do not call webpage/client tools.
+Keep each turn conversational and reasonably concise.
+
+2. VERCEL VARIABLES
+
+Add the Dialogue agent IDs separately from the visitor agent IDs:
+
+ELEVENLABS_DIALOGUE_AGENT_BERNAYS=agent_...
+ELEVENLABS_DIALOGUE_AGENT_IVY_LEE=agent_...
+ELEVENLABS_DIALOGUE_AGENT_LIPPMANN=agent_...
+ELEVENLABS_DIALOGUE_AGENT_ARTHUR_PAGE=agent_...
+
+Enable whichever ones should appear:
+PRMUSEUM_DIALOGUE_ENABLED_AGENTS=bernays,ivy-lee,lippmann,arthur-page
+
+Enable the feature:
 PRMUSEUM_AI_DIALOGUE_ENABLED=true
-
-Disable entirely:
-PRMUSEUM_AI_DIALOGUE_ENABLED=false
-
-Optional maximum autonomous voice turns (2–12):
 PRMUSEUM_AI_DIALOGUE_MAX_TURNS=6
 
-Requirements
-------------
-1. Your ElevenLabs plan/workspace must permit at least 2 concurrent conversations.
-2. Keep the `audio` client event enabled on every agent used in dialogue so the
-   live transcript can grow from speech alignment.
-3. No special transfer rules are required for AI dialogue. Keep your normal
-   transfer rules only for visitor-requested handoffs.
-4. No new API-key scope is required beyond the permissions already used to create
-   private conversation tokens.
+To hide the feature completely:
+PRMUSEUM_AI_DIALOGUE_ENABLED=false
 
-First-message handling
-----------------------
-The hidden secondary session starts muted and with output volume set to zero, then
-waits until it has remained silent before the app begins the exchange. This keeps
-a configured First Message from becoming part of the AI dialogue. If a brief greeting
-ever leaks through on a particular browser/device, the strongest optional safeguard
-is to disable that agent's First Message or enable a First Message override in the
-agent Security settings and suppress it for dialogue sessions.
+3. HOW IT WORKS
 
-Behavior
---------
-- Visitor microphone is muted while AI dialogue is active.
-- Only one agent is prompted at a time.
-- The next agent is not prompted until the current voice has stopped.
-- The main portrait switches only when that conversation instance reports that it
-  is actually speaking.
-- Stop AI dialogue ends the secondary session and restores the visitor microphone.
-- The turn limit prevents runaway autonomous conversations.
-- Near the 10-minute session limit, dialogue mode stops between voice turns rather
-  than cutting off a speaker.
+Visitor conversation mode:
+- one normal ElevenLabs agent session
+- normal visitor microphone/text questions
+- visitor-requested transfer behavior can remain on the normal agents
 
+AI Discussion mode:
+- two Dialogue agent sessions are opened simultaneously
+- both microphones are muted
+- Speaker A receives the topic as a text turn
+- the app waits until Speaker A has completely stopped speaking
+- Speaker A's completed text is sent to Speaker B with sendUserMessage()
+- the app waits until Speaker B has completely stopped speaking
+- Speaker B's text is sent back to Speaker A
+- repeat until PRMUSEUM_AI_DIALOGUE_MAX_TURNS is reached or the visitor presses Stop
 
-v4.5.3 NOTE
-The secondary dialogue participant now uses the direct ElevenLabs JavaScript Conversation.startSession API, outside the primary React ConversationProvider. This guarantees a genuinely independent second session and adds visible lifecycle status (fetching token, connecting, warming up, ready, relay sent, speaking).
+The portrait is tied directly to the session whose onModeChange reports speaking.
+No agent transfer or identity inference is involved.
 
+4. ELEVENLABS CONCURRENCY
 
-IMPORTANT FOR v4.5.4 AND LATER — SECONDARY FIRST MESSAGE
---------------------------------------------------------
-For every agent that may appear as the SECOND participant in AI-to-AI dialogue:
-
-1. Open the agent in ElevenLabs.
-2. Go to Security / Overrides.
-3. Enable the First message override.
-
-The website starts the hidden secondary conversation with firstMessage set to an
-empty string. This prevents that agent's normal visitor greeting from speaking over
-the first dialogue turn. ElevenLabs requires the First message override permission
-to be enabled before a client may replace it.
-
-You do NOT need to remove the agent's normal First Message in ElevenLabs; normal
-visitor conversations can continue using it.
-
-The relay now queues commands while the secondary session is connecting, so a turn
-can no longer be silently dropped if Agent A finishes before Agent B is ready.
+AI Discussion consumes two simultaneous ElevenLabs conversations.
+Your account must support at least two concurrent conversations.

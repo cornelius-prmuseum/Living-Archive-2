@@ -1,29 +1,27 @@
-PRMuseum Historical Voice App v4.5
-├── app/
-│   ├── api/
-│   │   ├── resolve-agent/route.ts
-│   │   ├── resolve-transfer/route.ts
-│   │   └── token/route.ts
-│   ├── globals.css
-│   ├── layout.tsx
-│   └── page.tsx
-├── components/
-│   ├── AgentExperience.tsx
-│   ├── HistoricalVoiceApp.tsx
-│   └── SecondaryDialogueSession.tsx
-├── lib/
-│   ├── agents.ts
-│   └── serverAgents.ts
-├── public/
-│   └── portraits/
-├── .env.example
-├── AI-DIALOGUE-SETUP.txt
-├── ELEVENLABS-AGENT-SYNC-SETUP.txt
-├── ELEVENLABS-MULTI-AGENT-SETUP.txt
-├── ELEVENLABS-PROMPT-ADDON.txt
-├── next-env.d.ts
-├── next.config.ts
-├── package.json
-├── README.md
-├── tsconfig.json
-└── wordpress-embed.html
+./.env.example
+./.gitignore
+./AI-DIALOGUE-SETUP.txt
+./ELEVENLABS-AGENT-SYNC-SETUP.txt
+./ELEVENLABS-MULTI-AGENT-SETUP.txt
+./ELEVENLABS-PROMPT-ADDON.txt
+./PROJECT-TREE.txt
+./README.md
+./app/globals.css
+./app/layout.tsx
+./app/page.tsx
+./components/AgentExperience.tsx
+./components/DialogueArena.tsx
+./components/HistoricalVoiceApp.tsx
+./components/SecondaryDialogueSession.tsx
+./lib/agents.ts
+./lib/serverAgents.ts
+./next-env.d.ts
+./next.config.ts
+./package.json
+./public/portraits/arthur-page.svg
+./public/portraits/bernays.svg
+./public/portraits/ivy-lee.svg
+./public/portraits/lippmann.svg
+./tsconfig.json
+./tsconfig.tsbuildinfo
+./wordpress-embed.html
