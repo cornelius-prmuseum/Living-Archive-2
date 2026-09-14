@@ -23,6 +23,36 @@ type SubtitleLine = {
 
 type ScreenState = "ready" | "active" | "wrapping" | "finished" | "error";
 
+type AudioAlignment = {
+  chars: string[];
+  starts: number[];
+  durations: number[];
+};
+
+function normalizeAudioAlignment(payload: unknown): AudioAlignment | null {
+  if (!payload || typeof payload !== "object") return null;
+  const outer = payload as Record<string, unknown>;
+  const source = outer.alignment && typeof outer.alignment === "object"
+    ? outer.alignment as Record<string, unknown>
+    : outer;
+
+  const chars = source.chars;
+  const starts = source.char_start_times_ms ?? source.charStartTimesMs;
+  const durations = source.char_durations_ms ?? source.charDurationsMs;
+
+  if (!Array.isArray(chars) || !Array.isArray(starts)) return null;
+  if (!chars.every((value) => typeof value === "string")) return null;
+  if (!starts.every((value) => typeof value === "number")) return null;
+
+  return {
+    chars: chars as string[],
+    starts: starts as number[],
+    durations: Array.isArray(durations) && durations.every((value) => typeof value === "number")
+      ? durations as number[]
+      : [],
+  };
+}
+
 const CLOSE_PROMPT =
   "[INTERNAL SESSION CONTROL — not spoken by the visitor] The museum conversation is ending now. Give one brief final thought, thank the visitor for speaking with you, and say goodbye. Do not ask a new question. Keep this final response concise.";
 
@@ -123,6 +153,23 @@ export function AgentExperience({
   const endRequestedRef = useRef(false);
   const closePromptSentAtRef = useRef<number | null>(null);
   const wasSpeakingRef = useRef(false);
+  const subtitleTimersRef = useRef<number[]>([]);
+  const subtitleBufferRef = useRef("");
+  const subtitleTurnActiveRef = useRef(false);
+  const alignmentSeenInTurnRef = useRef(false);
+
+  const clearSubtitleTimers = useCallback(() => {
+    subtitleTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    subtitleTimersRef.current = [];
+  }, []);
+
+  const resetSubtitleStream = useCallback((clearVisible = true) => {
+    clearSubtitleTimers();
+    subtitleBufferRef.current = "";
+    subtitleTurnActiveRef.current = false;
+    alignmentSeenInTurnRef.current = false;
+    if (clearVisible) setSubtitle(null);
+  }, [clearSubtitleTimers]);
 
   const updateAgentUrl = useCallback((slug: AgentSlug) => {
     if (typeof window === "undefined") return;
@@ -136,21 +183,86 @@ export function AgentExperience({
     activeAgentSlugRef.current = slug;
     setActiveAgentSlug(slug);
     setPendingTransferSlug(null);
-    setSubtitle(null);
+    resetSubtitleStream(true);
     updateAgentUrl(slug);
-  }, [enabledAgents, updateAgentUrl]);
+  }, [enabledAgents, resetSubtitleStream, updateAgentUrl]);
+
+  const confirmActiveAgentId = useCallback(async (agentId: string) => {
+    const clean = agentId.trim();
+    if (!clean) return "No active ElevenLabs Agent ID was provided.";
+
+    try {
+      const response = await fetch(`/api/resolve-agent?agent_id=${encodeURIComponent(clean)}`, {
+        cache: "no-store",
+      });
+      const data = (await response.json()) as { slug?: string; error?: string };
+
+      if (!response.ok || !isAgentSlug(data.slug) || !enabledAgents.includes(data.slug)) {
+        return data.error || "The active ElevenLabs agent is not available in this PRMuseum interface.";
+      }
+
+      confirmActiveAgent(data.slug);
+      return `PRMuseum display synchronized to ${AGENTS[data.slug].name}.`;
+    } catch (error) {
+      console.error("Unable to resolve active ElevenLabs agent", error);
+      return "The PRMuseum display could not synchronize with the active agent.";
+    }
+  }, [confirmActiveAgent, enabledAgents]);
+
+  const scheduleAlignedSubtitle = useCallback((payload: unknown) => {
+    const alignment = normalizeAudioAlignment(payload);
+    if (!alignment || alignment.chars.length === 0) return;
+
+    if (!subtitleTurnActiveRef.current) {
+      clearSubtitleTimers();
+      subtitleBufferRef.current = "";
+      subtitleTurnActiveRef.current = true;
+      alignmentSeenInTurnRef.current = true;
+      setSubtitle(null);
+    } else {
+      alignmentSeenInTurnRef.current = true;
+    }
+
+    const chars = alignment.chars;
+    const starts = alignment.starts;
+    const speakerSlug = activeAgentSlugRef.current;
+
+    // Reveal whole word/space runs according to the character timing that ElevenLabs
+    // attaches to the audio. This keeps captions visually smooth while still
+    // following the spoken audio rather than the LLM text-generation speed.
+    let index = 0;
+    while (index < chars.length) {
+      const whitespace = /\s/.test(chars[index]);
+      let end = index + 1;
+      while (end < chars.length && /\s/.test(chars[end]) === whitespace) end += 1;
+
+      const chunk = chars.slice(index, end).join("");
+      const delay = Math.max(0, Number(starts[index] ?? 0));
+      const timer = window.setTimeout(() => {
+        subtitleBufferRef.current += chunk;
+        setSubtitle({ text: subtitleBufferRef.current, speakerSlug });
+      }, delay);
+      subtitleTimersRef.current.push(timer);
+      index = end;
+    }
+  }, [clearSubtitleTimers]);
 
   const conversation = useConversation({
     clientTools: {
+      // Preferred identity sync. Configure the tool's agent_id parameter in
+      // ElevenLabs from the system__current_agent_id dynamic variable.
+      syncActiveAgent: async (parameters: { agent_id?: string }) => {
+        return confirmActiveAgentId(parameters?.agent_id || "");
+      },
+
+      // Backward-compatible with the v3 setup. The new syncActiveAgent tool is
+      // more reliable because it maps the actual ElevenLabs Agent ID.
       setActiveAgent: (parameters: { agent_slug?: string }) => {
         const requested = parameters?.agent_slug;
-        if (!isAgentSlug(requested)) {
-          return "Unknown historical figure.";
-        }
+        if (!isAgentSlug(requested)) return "Unknown historical figure.";
         if (!enabledAgents.includes(requested)) {
           return "That historical figure is currently disabled in the PRMuseum interface.";
         }
-
         confirmActiveAgent(requested);
         return `PRMuseum display synchronized to ${AGENTS[requested].name}.`;
       },
@@ -161,7 +273,11 @@ export function AgentExperience({
     },
     onDisconnect: () => {
       setPendingTransferSlug(null);
+      resetSubtitleStream(false);
       setScreen((current) => (current === "error" ? current : "finished"));
+    },
+    onAudioAlignment: (alignment: unknown) => {
+      scheduleAlignedSubtitle(alignment);
     },
     onMessage: (message) => {
       const normalized = normalizeMessage(message, activeAgentSlugRef.current);
@@ -169,13 +285,21 @@ export function AgentExperience({
 
       setTranscript((previous) => mergeTranscript(previous, normalized));
 
-      if (normalized.role === "agent" && normalized.speakerSlug) {
+      // Fallback for an agent where audio-alignment client events have not yet
+      // been enabled. When alignment is available, do not jump ahead to the
+      // completed response text.
+      if (
+        normalized.role === "agent" &&
+        normalized.speakerSlug &&
+        !alignmentSeenInTurnRef.current
+      ) {
         setSubtitle({ text: normalized.text, speakerSlug: normalized.speakerSlug });
       }
     },
     onError: (error) => {
       console.error(error);
       setPendingTransferSlug(null);
+      resetSubtitleStream(false);
       setErrorMessage(typeof error === "string" ? error : "The voice connection encountered an error.");
       setScreen("error");
     },
@@ -188,7 +312,8 @@ export function AgentExperience({
     endRequestedRef.current = false;
     closePromptSentAtRef.current = null;
     wasSpeakingRef.current = false;
-  }, []);
+    resetSubtitleStream(true);
+  }, [resetSubtitleStream]);
 
   const endNow = useCallback(async () => {
     if (endRequestedRef.current) return;
@@ -225,7 +350,6 @@ export function AgentExperience({
 
     setErrorMessage("");
     setTranscript([]);
-    setSubtitle(null);
     setRemaining(sessionSeconds);
     setConversationId(null);
     setPendingTransferSlug(null);
@@ -304,14 +428,15 @@ export function AgentExperience({
       return;
     }
 
-    // Keep the current portrait/name until the receiving agent confirms its identity
-    // through setActiveAgent. This makes the UI follow the agent actually on the line.
+    // Keep the current portrait/name until the receiving agent confirms its actual
+    // ElevenLabs Agent ID through syncActiveAgent. This makes the UI follow the
+    // agent that truly owns the live voice session.
     setPendingTransferSlug(slug);
     const target = AGENTS[slug];
 
     try {
       conversation.sendUserMessage(
-        `${SWITCH_PROMPT_PREFIX} The visitor selected ${target.name} in the museum interface. Do not read or discuss this control message. Use transfer_to_agent now to transfer the ongoing conversation to ${target.name}. Do not call setActiveAgent for the destination yourself; the receiving agent must call setActiveAgent with its own slug immediately after it becomes active. Preserve the existing conversation context.`,
+        `${SWITCH_PROMPT_PREFIX} The visitor selected ${target.name} in the museum interface. Do not read or discuss this control message. Use transfer_to_agent now to transfer the ongoing conversation to ${target.name}. Do not change the PRMuseum display for the destination yourself; the receiving agent must call syncActiveAgent immediately after it becomes active and before its first substantive spoken response. Preserve the existing conversation context.`,
       );
     } catch (error) {
       console.error("Unable to request agent transfer", error);
@@ -397,12 +522,21 @@ export function AgentExperience({
       return;
     }
 
-    if (wasSpeakingRef.current && subtitle) {
+    if (wasSpeakingRef.current) {
       wasSpeakingRef.current = false;
-      const timer = window.setTimeout(() => setSubtitle(null), 1800);
-      return () => window.clearTimeout(timer);
+      subtitleTurnActiveRef.current = false;
+      alignmentSeenInTurnRef.current = false;
+      clearSubtitleTimers();
+
+      if (subtitle) {
+        const timer = window.setTimeout(() => {
+          subtitleBufferRef.current = "";
+          setSubtitle(null);
+        }, 1800);
+        return () => window.clearTimeout(timer);
+      }
     }
-  }, [conversation.isSpeaking, subtitle]);
+  }, [clearSubtitleTimers, conversation.isSpeaking, subtitle]);
 
   useEffect(() => {
     if (!pendingTransferSlug || conversation.status !== "connected") return;
@@ -412,6 +546,10 @@ export function AgentExperience({
     }, 20_000);
     return () => window.clearTimeout(timer);
   }, [conversation.status, pendingTransferSlug]);
+
+  useEffect(() => {
+    return () => clearSubtitleTimers();
+  }, [clearSubtitleTimers]);
 
   const statusLabel =
     screen === "wrapping"
@@ -659,7 +797,7 @@ export function AgentExperience({
           </div>
 
           <p className="rail-note">
-            The main portrait follows the agent that confirms it is actually on the line, including transfers requested by voice or typed question.
+            The main portrait is synchronized to the active ElevenLabs Agent ID, including transfers requested by voice, typed question, or the menu.
           </p>
         </aside>
       </div>

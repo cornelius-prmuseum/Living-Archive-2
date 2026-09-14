@@ -28,3 +28,14 @@ export function getEnabledAgentSlugs(): AgentSlug[] {
 export function isAgentEnabled(slug: AgentSlug): boolean {
   return getEnabledAgentSlugs().includes(slug);
 }
+
+export function getAgentSlugById(agentId: string): AgentSlug | null {
+  const normalized = agentId.trim();
+  if (!normalized) return null;
+
+  for (const slug of AGENT_ORDER) {
+    if (getAgentId(slug) === normalized) return slug;
+  }
+
+  return null;
+}

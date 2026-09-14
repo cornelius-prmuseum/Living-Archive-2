@@ -1,4 +1,4 @@
-# PRMuseum Historical Voice App — Multi-Agent v3
+# PRMuseum Historical Voice App — Multi-Agent v4
 
 A Next.js/Vercel frontend for PRMuseum historical voice agents powered by ElevenLabs.
 
@@ -8,8 +8,8 @@ A Next.js/Vercel frontend for PRMuseum historical voice agents powered by Eleven
 - Right-side agent selector with portraits and active-agent state
 - Voice questions and typed questions in the same live conversation
 - Three clickable recommended questions for every historical figure
-- Live on-screen subtitles based on incoming ElevenLabs agent-response text
-- UI synchronization after agent-to-agent transfers through the `setActiveAgent` client tool
+- Speech-synchronized progressive subtitles using ElevenLabs audio alignment timing
+- Active-profile synchronization using ElevenLabs `system__current_agent_id` plus the `syncActiveAgent` client tool
 - Server-side enable/disable list for agents
 - 10-minute frontend session timer with graceful wrap-up
 - Server-side WebRTC conversation-token route
@@ -78,30 +78,31 @@ The included `public/portraits/arthur-page.svg` is a placeholder. Replace it wit
 
 ## Agent-transfer UI synchronization
 
-ElevenLabs preserves conversation history across `transfer_to_agent`, but individual transcript messages do not expose the active `agent_id` to the browser. For that reason, every historical agent must have the same client tool:
+ElevenLabs now exposes a system dynamic variable named:
 
 ```text
-setActiveAgent
+system__current_agent_id
 ```
 
-with a required string parameter:
+It is automatically updated after an agent-to-agent transfer. The v4 app uses a client tool named:
 
 ```text
-agent_slug
+syncActiveAgent
 ```
 
-Valid values are:
+with the parameter:
 
 ```text
-bernays
-ivy-lee
-lippmann
-arthur-page
+agent_id
 ```
 
-The receiving agent should call `setActiveAgent` with **its own** slug immediately after it becomes active and before its first substantive response. This keeps the main portrait, name, status, recommended questions, transcript speaker attribution, and URL synchronized even when the visitor asks verbally or by typed question to switch agents.
+Configure that parameter from the ElevenLabs dynamic variable `system__current_agent_id` (or `{{system__current_agent_id}}` where template syntax is requested). The browser then calls `/api/resolve-agent`, and the server maps the actual ElevenLabs Agent ID to the matching PRMuseum profile using the existing Vercel `ELEVENLABS_AGENT_*` environment variables.
 
-See `ELEVENLABS-MULTI-AGENT-SETUP.txt` for the exact prompt block and transfer setup.
+This is more reliable than asking the LLM to choose a PRMuseum slug. The receiving agent should call `syncActiveAgent` immediately after it becomes active and before its first substantive spoken response.
+
+There is no extra API-key scope needed for this. Keep `convai_write`, which is already required by the WebRTC token endpoint.
+
+See `ELEVENLABS-MULTI-AGENT-SETUP.txt` for the exact configuration.
 
 ## Typed questions
 
@@ -109,7 +110,13 @@ See `ELEVENLABS-MULTI-AGENT-SETUP.txt` for the exact prompt block and transfer s
 
 ## Subtitles
 
-Incoming ElevenLabs agent-response text is displayed in a subtitle panel while the agent is speaking and briefly after the response ends. The full transcript remains available separately.
+The v4 app uses the React SDK `onAudioAlignment` callback. ElevenLabs supplies character-level timing (`chars`, `char_start_times_ms`, and `char_durations_ms`) with agent speech. The UI groups those timings into progressive text runs so the caption grows while the words are actually being spoken rather than jumping to the complete response.
+
+For every agent that can begin a conversation, enable the **audio** client event under the agent's **Advanced → Client events** settings. Transfers inherit the parent agent's client-event configuration, but keeping this enabled consistently on every agent ensures captions work regardless of which figure starts the session.
+
+If alignment is unavailable, the app falls back to displaying the completed agent-response text.
+
+No extra API-key permission is required for audio alignment.
 
 ## Vercel deployment
 
@@ -139,8 +146,8 @@ allow="microphone; autoplay"
 
 ```text
 lib/agents.ts                       Names, bios, portraits, suggested questions
-lib/serverAgents.ts                 Server-side agent ID and availability logic
-components/AgentExperience.tsx      Main UI, text input, subtitles, transfers, timer
+lib/serverAgents.ts                 Server-side Agent ID, identity resolution, and availability logic
+components/AgentExperience.tsx      Main UI, audio-aligned subtitles, identity sync, transfers, timer
 app/globals.css                     Styling
 ELEVENLABS-MULTI-AGENT-SETUP.txt    ElevenLabs setup instructions
 ```

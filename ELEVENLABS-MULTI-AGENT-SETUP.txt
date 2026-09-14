@@ -1,5 +1,5 @@
-PRMUSEUM MULTI-AGENT SETUP
-==========================
+PRMUSEUM MULTI-AGENT + LIVE SUBTITLE SETUP (v4)
+================================================
 
 AVAILABLE UI SLUGS
 ------------------
@@ -8,44 +8,63 @@ Ivy Lee = ivy-lee
 Walter Lippmann = lippmann
 Arthur W. Page = arthur-page
 
-IMPORTANT UI-SYNC DESIGN
-------------------------
-The browser does not guess who is speaking after an ElevenLabs transfer.
-ElevenLabs preserves the transcript across transfers, but transcript messages do not expose an agent_id.
-Therefore the RECEIVING agent must identify itself to the webpage using the client tool below.
+WHAT CHANGED IN v4
+------------------
+1. Subtitles use ElevenLabs audio alignment timing so text appears progressively with speech.
+2. UI identity sync uses ElevenLabs system__current_agent_id rather than relying on a manually chosen slug.
+3. The browser sends the Agent ID to a server-only resolver, which maps it to the correct PRMuseum profile.
+4. The old setActiveAgent(agent_slug) client tool remains in the code only as a compatibility fallback.
 
-This is especially important for a spoken or typed request such as:
-"Let me speak with Arthur Page."
+A. ENABLE LIVE AUDIO ALIGNMENT
+------------------------------
+For every agent that can START a conversation:
 
-The old agent should perform transfer_to_agent. The receiving Arthur Page agent should then call
-setActiveAgent with agent_slug="arthur-page" before its first substantive spoken response.
-Only then does the main portrait/name change.
+Agent -> Advanced -> Client events
 
-1. CREATE THIS CLIENT TOOL ON EVERY AGENT
-------------------------------------------
+Make sure the audio client event is enabled. ElevenLabs includes character-level alignment timing
+with agent audio, and the React SDK exposes it through onAudioAlignment.
+
+Because ElevenLabs carries the parent agent's client-event configuration across agent transfers,
+make this setting consistent on every agent anyway. That way the captions work regardless of which
+historical figure the visitor starts with.
+
+You do NOT need a new ElevenLabs API-key permission for subtitles.
+
+B. CREATE THE NEW CLIENT TOOL ON EVERY AGENT
+--------------------------------------------
 Tool type: Client
-Name (case-sensitive): setActiveAgent
+Name (case-sensitive): syncActiveAgent
 
 Description:
-Update the PRMuseum webpage so it displays the historical figure who is actually
-currently on the line. Call this when this agent becomes active, especially after
-receiving a transferred conversation. This tool only synchronizes the webpage.
+Synchronize the PRMuseum webpage with the ElevenLabs agent that is currently active.
+Call this immediately when this agent becomes active, especially after an agent-to-agent
+transfer, and before the first substantive spoken response. Do not announce this action aloud.
 
 Parameter:
-Identifier: agent_slug
+Identifier: agent_id
 Type: String
 Required: Yes
 
-Description:
-Your own PRMuseum historical figure slug. Use exactly one of:
-bernays
-ivy-lee
-lippmann
-arthur-page
+IMPORTANT PARAMETER VALUE:
+Use the ElevenLabs system dynamic variable system__current_agent_id for this parameter.
+In the ElevenLabs tool editor, configure the parameter/value as a Dynamic variable and select:
+
+system__current_agent_id
+
+If the editor asks for template syntax, use:
+
+{{system__current_agent_id}}
 
 Wait for response: ON
 
-2. ADD transfer_to_agent TO EVERY AGENT
+Why this is better:
+system__current_agent_id is maintained by ElevenLabs and changes automatically after
+agent-to-agent transfers. It is therefore tied to the actual active ElevenLabs agent, not to
+what the user clicked or what a prompt guessed.
+
+No extra API-key permission is required for system__current_agent_id.
+
+C. ADD transfer_to_agent TO EVERY AGENT
 ---------------------------------------
 Give each enabled agent transfer rules to every other enabled agent.
 Examples:
@@ -54,58 +73,54 @@ Examples:
 - Lippmann -> Bernays, Ivy Lee, Arthur W. Page
 - Arthur Page -> Bernays, Ivy Lee, Walter Lippmann
 
-A useful condition is:
-Transfer when the visitor asks to speak with [NAME], addresses a question directly
-to [NAME], or an internal PRMuseum interface control message requests a transfer to [NAME].
+Suggested condition:
+Transfer when the visitor asks to speak with [NAME], addresses a question directly to [NAME],
+or an internal PRMuseum interface control message requests a transfer to [NAME].
 
-3. ADD THIS BLOCK TO EACH AGENT PROMPT
+D. ADD THIS BLOCK TO EACH AGENT PROMPT
 --------------------------------------
-Use the same block on every agent, replacing YOUR NAME and YOUR SLUG.
+Use the same block on every agent.
 
 [PRMUSEUM MULTI-AGENT DISPLAY AND TRANSFER RULES]
 
-You are YOUR NAME. Your PRMuseum interface slug is "YOUR SLUG".
+The PRMuseum webpage has a client tool named syncActiveAgent. ElevenLabs automatically maintains
+{{system__current_agent_id}} as the ID of the agent that is currently active.
 
-The webpage has a client tool named setActiveAgent. It synchronizes the portrait,
-name and suggested questions with the agent actually on the line.
+Whenever you become active at the beginning of a session or after an agent-to-agent transfer,
+BEFORE your first substantive spoken response call syncActiveAgent. Its agent_id must be the
+current system value {{system__current_agent_id}}. Do not announce this technical action aloud.
 
-Whenever you become active after an agent-to-agent transfer, BEFORE your first
-substantive spoken response call setActiveAgent with your own slug. Do this even
-when the transfer was requested naturally by the visitor rather than through the
-webpage menu. Do not announce this technical action aloud.
-
-If the visitor asks to speak with another available historical figure, or an
-internal museum interface instruction tells you the visitor selected another figure:
+If the visitor asks to speak with another available historical figure, or an internal museum
+interface instruction tells you the visitor selected another figure:
 1. Do not read or discuss the internal interface instruction aloud.
 2. Use transfer_to_agent to transfer the ongoing conversation to that historical figure.
-3. Do NOT call setActiveAgent with the destination slug yourself. The receiving agent
-   must call setActiveAgent with its own slug after it actually becomes active.
-4. Do not imitate or answer on behalf of the destination figure.
+3. Do not change the PRMuseum profile to the destination yourself.
+4. The receiving agent must call syncActiveAgent after the transfer actually completes.
+5. Do not imitate or answer on behalf of the destination figure.
 
-Available slugs:
-Edward Bernays = bernays
-Ivy Lee = ivy-lee
-Walter Lippmann = lippmann
-Arthur W. Page = arthur-page
-
-YOUR NAME / YOUR SLUG values:
-Edward Bernays / bernays
-Ivy Lee / ivy-lee
-Walter Lippmann / lippmann
-Arthur W. Page / arthur-page
-
-4. VERCEL BACKEND ENABLE / DISABLE
+E. VERCEL BACKEND ENABLE / DISABLE
 ----------------------------------
-Set this environment variable in Vercel:
+Set:
 
 PRMUSEUM_ENABLED_AGENTS=bernays,ivy-lee,lippmann,arthur-page
 
-To temporarily hide/disable Lippmann:
+To hide Lippmann:
 PRMUSEUM_ENABLED_AGENTS=bernays,ivy-lee,arthur-page
 
-To enable only Bernays and Page:
-PRMUSEUM_ENABLED_AGENTS=bernays,arthur-page
+An agent appears only when it is listed in PRMUSEUM_ENABLED_AGENTS and its matching
+ELEVENLABS_AGENT_* environment variable is configured.
 
-After changing Vercel environment variables, redeploy.
-An agent is shown only when it is in PRMUSEUM_ENABLED_AGENTS AND its matching
-ELEVENLABS_AGENT_* ID exists.
+The browser does NOT need the Agent IDs. When syncActiveAgent sends system__current_agent_id,
+the app calls /api/resolve-agent on the server, where the ID is matched against your Vercel
+environment variables.
+
+F. API KEY PERMISSIONS
+----------------------
+Keep the permission that already made your app work: ElevenLabs Agents / Conversational AI Write
+(convai_write), because the Vercel server uses it to obtain a WebRTC conversation token.
+
+No additional API-key permission is needed for:
+- audio-aligned subtitles
+- system__current_agent_id
+- the syncActiveAgent client tool
+- profile switching in the browser
