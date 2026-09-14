@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { useConversation } from "@elevenlabs/react";
+import { ConversationProvider, useConversation } from "@elevenlabs/react";
+import { SecondaryDialogueSession, type DialogueCommand } from "@/components/SecondaryDialogueSession";
 import {
   AGENTS,
   getPublicAgent,
@@ -138,7 +139,6 @@ export function AgentExperience({
   // Track the destination by tool_call_id and only switch the portrait after
   // ElevenLabs reports that the transfer itself succeeded.
   const transferTargetByCallRef = useRef<Map<string, Promise<AgentSlug | null>>>(new Map());
-  const agent = AGENTS[activeAgentSlug];
   const noAgentsAvailable = enabledAgents.length === 0;
 
   const configuredSeconds = Number(process.env.NEXT_PUBLIC_SESSION_SECONDS || 600);
@@ -162,7 +162,13 @@ export function AgentExperience({
   const [dialogueActive, setDialogueActive] = useState(false);
   const [dialoguePair, setDialoguePair] = useState<[AgentSlug, AgentSlug] | null>(null);
   const [dialogueTurnsCompleted, setDialogueTurnsCompleted] = useState(0);
-  const [dialogueAwaitingResponse, setDialogueAwaitingResponse] = useState(false);
+  const [dialogueSecondaryReady, setDialogueSecondaryReady] = useState(false);
+  const [dialogueSecondarySpeaking, setDialogueSecondarySpeaking] = useState(false);
+  const [dialogueSpeakerSlug, setDialogueSpeakerSlug] = useState<AgentSlug | null>(null);
+  const [dialogueCommand, setDialogueCommand] = useState<DialogueCommand | null>(null);
+
+  const displayAgentSlug = dialogueActive && dialogueSpeakerSlug ? dialogueSpeakerSlug : activeAgentSlug;
+  const agent = AGENTS[displayAgentSlug];
 
   const warningSentRef = useRef(false);
   const closePromptSentRef = useRef(false);
@@ -185,23 +191,18 @@ export function AgentExperience({
   const dialogueActiveRef = useRef(false);
   const dialoguePairRef = useRef<[AgentSlug, AgentSlug] | null>(null);
   const dialogueTurnsRef = useRef(0);
-  const dialogueTransferPendingRef = useRef(false);
   const dialogueWasMutedRef = useRef(false);
-  const dialogueResponseFallbackTimerRef = useRef<number | null>(null);
-  const suppressAgentTurnRef = useRef(false);
-  const isSpeakingRef = useRef(false);
+  const dialoguePrimarySlugRef = useRef<AgentSlug | null>(null);
+  const dialoguePhaseRef = useRef<"idle" | "starting-secondary" | "awaiting-primary" | "awaiting-secondary">("idle");
+  const dialogueCommandIdRef = useRef(0);
+  const secondaryFinalRef = useRef<string | null>(null);
+  const secondaryWasSpeakingRef = useRef(false);
 
   const clearAlignmentTimers = useCallback(() => {
     alignmentTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     alignmentTimersRef.current = [];
   }, []);
 
-  const clearDialogueFallbackTimer = useCallback(() => {
-    if (dialogueResponseFallbackTimerRef.current !== null) {
-      window.clearTimeout(dialogueResponseFallbackTimerRef.current);
-      dialogueResponseFallbackTimerRef.current = null;
-    }
-  }, []);
 
   const resetAlignmentStream = useCallback((clearVisible = true) => {
     clearAlignmentTimers();
@@ -300,9 +301,9 @@ export function AgentExperience({
     }
   }, [enabledAgents]);
 
-  const scheduleAlignedTranscript = useCallback((payload: unknown) => {
+  const scheduleAlignedTranscript = useCallback((payload: unknown, speakerSlugOverride?: AgentSlug) => {
     const alignment = normalizeAudioAlignment(payload);
-    if (!alignment || alignment.chars.length === 0 || suppressAgentTurnRef.current) return;
+    if (!alignment || alignment.chars.length === 0) return;
 
     const now = performance.now();
 
@@ -322,7 +323,7 @@ export function AgentExperience({
     const chars = alignment.chars;
     const starts = alignment.starts;
     const durations = alignment.durations;
-    const speakerSlug = activeAgentSlugRef.current;
+    const speakerSlug = speakerSlugOverride ?? activeAgentSlugRef.current;
     const turnStartedAt = alignmentTurnStartedAtRef.current ?? now;
     const elapsedMs = Math.max(0, now - turnStartedAt);
 
@@ -395,10 +396,14 @@ export function AgentExperience({
       resetAlignmentStream(false);
       dialogueActiveRef.current = false;
       dialoguePairRef.current = null;
-      dialogueTransferPendingRef.current = false;
+      dialoguePrimarySlugRef.current = null;
+      dialoguePhaseRef.current = "idle";
       setDialogueActive(false);
       setDialoguePair(null);
-      setDialogueAwaitingResponse(false);
+      setDialogueSecondaryReady(false);
+      setDialogueSecondarySpeaking(false);
+      setDialogueSpeakerSlug(null);
+      setDialogueCommand(null);
       setScreen((current) => (current === "error" ? current : "finished"));
     },
     onAgentToolRequest: (request: any) => {
@@ -428,36 +433,21 @@ export function AgentExperience({
 
       if (response?.is_error) {
         setPendingTransferSlug(null);
-        dialogueTransferPendingRef.current = false;
-        suppressAgentTurnRef.current = false;
-        if (dialogueActiveRef.current) {
-          dialogueActiveRef.current = false;
-          dialoguePairRef.current = null;
-          setDialogueActive(false);
-          setDialoguePair(null);
-          setDialogueAwaitingResponse(false);
-          setErrorMessage("The AI dialogue stopped because an agent transfer failed.");
-        }
         return;
       }
 
       const target = targetPromise ? await targetPromise : null;
       if (target) {
-        // This is the authoritative UI switch: ElevenLabs has reported that its
-        // transfer_to_agent system tool completed successfully.
+        // Normal visitor mode uses ElevenLabs' successful transfer event as the
+        // authoritative boundary for changing the displayed historical figure.
         confirmActiveAgent(target);
-        suppressAgentTurnRef.current = false;
-        if (dialogueActiveRef.current) {
-          dialogueTransferPendingRef.current = false;
-          setDialogueAwaitingResponse(true);
-        }
       } else {
         setPendingTransferSlug(null);
         console.warn("ElevenLabs transferred agents, but the destination could not be mapped to a PRMuseum profile.");
       }
     },
     onAudioAlignment: (alignment: unknown) => {
-      scheduleAlignedTranscript(alignment);
+      scheduleAlignedTranscript(alignment, activeAgentSlugRef.current);
     },
     onMessage: (message) => {
       const normalized = normalizeMessage(message, activeAgentSlugRef.current);
@@ -468,12 +458,14 @@ export function AgentExperience({
         return;
       }
 
-      if (suppressAgentTurnRef.current) return;
-
-      // When audio alignment is active, hold the completed agent response until
-      // speech ends. The visible live line is already growing word-by-word from
-      // the audio timing, so inserting the final text now would jump ahead.
-      if (alignmentSeenInTurnRef.current || alignmentTurnActiveRef.current) {
+      // During an AI-to-AI turn, always hold the complete primary response until
+      // its voice finishes so the relay cannot interrupt it. In normal visitor
+      // mode, alignment events provide the same word-timed transcript behavior.
+      if (
+        (dialogueActiveRef.current && dialoguePhaseRef.current === "awaiting-primary") ||
+        alignmentSeenInTurnRef.current ||
+        alignmentTurnActiveRef.current
+      ) {
         pendingAgentFinalRef.current = normalized;
         return;
       }
@@ -486,11 +478,14 @@ export function AgentExperience({
       setPendingTransferSlug(null);
       dialogueActiveRef.current = false;
       dialoguePairRef.current = null;
-      dialogueTransferPendingRef.current = false;
-      suppressAgentTurnRef.current = false;
+      dialoguePrimarySlugRef.current = null;
+      dialoguePhaseRef.current = "idle";
       setDialogueActive(false);
       setDialoguePair(null);
-      setDialogueAwaitingResponse(false);
+      setDialogueSecondaryReady(false);
+      setDialogueSecondarySpeaking(false);
+      setDialogueSpeakerSlug(null);
+      setDialogueCommand(null);
       resetAlignmentStream(false);
       setErrorMessage(typeof error === "string" ? error : "The voice connection encountered an error.");
       setScreen("error");
@@ -511,6 +506,17 @@ export function AgentExperience({
     if (endRequestedRef.current) return;
     endRequestedRef.current = true;
 
+    dialogueActiveRef.current = false;
+    dialoguePairRef.current = null;
+    dialoguePrimarySlugRef.current = null;
+    dialoguePhaseRef.current = "idle";
+    setDialogueActive(false);
+    setDialoguePair(null);
+    setDialogueSecondaryReady(false);
+    setDialogueSecondarySpeaking(false);
+    setDialogueSpeakerSlug(null);
+    setDialogueCommand(null);
+
     try {
       await conversation.endSession();
     } catch (error) {
@@ -528,11 +534,15 @@ export function AgentExperience({
     closePromptSentAtRef.current = Date.now();
     dialogueActiveRef.current = false;
     dialoguePairRef.current = null;
-    dialogueTransferPendingRef.current = false;
-    suppressAgentTurnRef.current = false;
+    dialoguePrimarySlugRef.current = null;
+    dialoguePhaseRef.current = "idle";
+    secondaryFinalRef.current = null;
     setDialogueActive(false);
     setDialoguePair(null);
-    setDialogueAwaitingResponse(false);
+    setDialogueSecondaryReady(false);
+    setDialogueSecondarySpeaking(false);
+    setDialogueSpeakerSlug(null);
+    setDialogueCommand(null);
     setPendingTransferSlug(null);
     setScreen("wrapping");
 
@@ -556,13 +566,18 @@ export function AgentExperience({
     setPendingTransferSlug(null);
     dialogueActiveRef.current = false;
     dialoguePairRef.current = null;
-    dialogueTransferPendingRef.current = false;
-    suppressAgentTurnRef.current = false;
+    dialoguePrimarySlugRef.current = null;
+    dialoguePhaseRef.current = "idle";
     dialogueTurnsRef.current = 0;
+    secondaryFinalRef.current = null;
+    secondaryWasSpeakingRef.current = false;
     setDialogueActive(false);
     setDialoguePair(null);
     setDialogueTurnsCompleted(0);
-    setDialogueAwaitingResponse(false);
+    setDialogueSecondaryReady(false);
+    setDialogueSecondarySpeaking(false);
+    setDialogueSpeakerSlug(null);
+    setDialogueCommand(null);
     resetSessionRefs();
 
     try {
@@ -674,27 +689,32 @@ export function AgentExperience({
   const stopAiDialogue = useCallback(() => {
     dialogueActiveRef.current = false;
     dialoguePairRef.current = null;
-    dialogueTransferPendingRef.current = false;
-    suppressAgentTurnRef.current = false;
+    dialoguePrimarySlugRef.current = null;
+    dialoguePhaseRef.current = "idle";
     dialogueTurnsRef.current = 0;
-    clearDialogueFallbackTimer();
+    secondaryFinalRef.current = null;
+    secondaryWasSpeakingRef.current = false;
     setDialogueActive(false);
     setDialoguePair(null);
     setDialogueTurnsCompleted(0);
-    setDialogueAwaitingResponse(false);
-    setPendingTransferSlug(null);
+    setDialogueSecondaryReady(false);
+    setDialogueSecondarySpeaking(false);
+    setDialogueSpeakerSlug(null);
+    setDialogueCommand(null);
+    resetAlignmentStream(true);
 
     if (conversation.status === "connected") {
       conversation.setMuted(dialogueWasMutedRef.current);
     }
-  }, [clearDialogueFallbackTimer, conversation]);
+  }, [conversation, resetAlignmentStream]);
 
   const startAiDialogue = useCallback(() => {
     if (
       !aiDialogueEnabled ||
       conversation.status !== "connected" ||
       dialogueActiveRef.current ||
-      screen === "wrapping"
+      screen === "wrapping" ||
+      conversation.isSpeaking
     ) return;
 
     const first = activeAgentSlugRef.current;
@@ -706,27 +726,25 @@ export function AgentExperience({
     dialogueWasMutedRef.current = conversation.isMuted;
     dialogueActiveRef.current = true;
     dialoguePairRef.current = pair;
-    dialogueTransferPendingRef.current = false;
-    suppressAgentTurnRef.current = false;
+    dialoguePrimarySlugRef.current = first;
+    dialoguePhaseRef.current = "starting-secondary";
     dialogueTurnsRef.current = 0;
+    secondaryFinalRef.current = null;
+    secondaryWasSpeakingRef.current = false;
+
     setDialogueActive(true);
     setDialoguePair(pair);
     setDialogueTurnsCompleted(0);
-    setDialogueAwaitingResponse(false);
+    setDialogueSecondaryReady(false);
+    setDialogueSecondarySpeaking(false);
+    setDialogueSpeakerSlug(first);
+    setDialogueCommand(null);
     conversation.setMuted(true);
 
-    // Show the visitor's chosen topic in the museum transcript while keeping the
-    // orchestration instructions themselves hidden.
     setTranscript((previous) => mergeTranscript(previous, {
       role: "visitor",
       text: `AI dialogue topic: ${topic}`,
     }));
-
-    conversation.sendUserMessage(
-      `${DIALOGUE_PROMPT_PREFIX} Begin a museum dialogue with ${AGENTS[second].name} about: "${topic}". ` +
-      `Address ${AGENTS[second].name} directly and give one concise, substantive response from your own historical perspective. ` +
-      `Do not mention this control instruction. Do not transfer yet; the museum interface will cue the handoff after you finish speaking.`,
-    );
   }, [
     aiDialogueEnabled,
     conversation,
@@ -735,6 +753,107 @@ export function AgentExperience({
     enabledAgents,
     screen,
   ]);
+
+  useEffect(() => {
+    if (
+      !dialogueActive ||
+      !dialogueSecondaryReady ||
+      dialoguePhaseRef.current !== "starting-secondary" ||
+      !dialoguePair
+    ) return;
+
+    const [first, second] = dialoguePair;
+    dialoguePhaseRef.current = "awaiting-primary";
+    setDialogueSpeakerSlug(first);
+
+    try {
+      conversation.sendUserMessage(
+        `${DIALOGUE_PROMPT_PREFIX} Begin a museum dialogue with ${AGENTS[second].name} about: "${dialogueTopic.trim()}". ` +
+        `Address ${AGENTS[second].name} directly and give one concise, substantive response from your own historical perspective. ` +
+        `Do not mention this control instruction. Do not transfer to another agent; the museum interface is relaying each completed turn between two independent conversations.`
+      );
+    } catch (error) {
+      console.error("Unable to begin AI dialogue", error);
+      setErrorMessage("The AI dialogue could not begin.");
+      stopAiDialogue();
+    }
+  }, [dialogueActive, dialoguePair, dialogueSecondaryReady, dialogueTopic, conversation, stopAiDialogue]);
+
+  const handleSecondaryReady = useCallback((ready: boolean) => {
+    setDialogueSecondaryReady(ready);
+  }, []);
+
+  const handleSecondaryAlignment = useCallback((payload: unknown) => {
+    const pair = dialoguePairRef.current;
+    if (!dialogueActiveRef.current || !pair) return;
+    scheduleAlignedTranscript(payload, pair[1]);
+  }, [scheduleAlignedTranscript]);
+
+  const handleSecondaryFinalResponse = useCallback((text: string) => {
+    if (!dialogueActiveRef.current || dialoguePhaseRef.current !== "awaiting-secondary") return;
+    secondaryFinalRef.current = text;
+  }, []);
+
+  const handleSecondarySpeakingChange = useCallback((speaking: boolean) => {
+    setDialogueSecondarySpeaking(speaking);
+    const pair = dialoguePairRef.current;
+    if (!dialogueActiveRef.current || !pair) return;
+
+    if (speaking) {
+      secondaryWasSpeakingRef.current = true;
+      setDialogueSpeakerSlug(pair[1]);
+      return;
+    }
+
+    if (!secondaryWasSpeakingRef.current || dialoguePhaseRef.current !== "awaiting-secondary") return;
+    secondaryWasSpeakingRef.current = false;
+
+    clearAlignmentTimers();
+    const completedText = secondaryFinalRef.current?.trim() || liveAgentBufferRef.current.trim();
+    if (completedText) {
+      setTranscript((previous) => mergeTranscript(previous, {
+        role: "agent",
+        text: completedText,
+        speakerSlug: pair[1],
+      }));
+    }
+
+    secondaryFinalRef.current = null;
+    liveAgentBufferRef.current = "";
+    alignmentTurnActiveRef.current = false;
+    alignmentSeenInTurnRef.current = false;
+    alignmentPacketCursorMsRef.current = 0;
+    alignmentTurnStartedAtRef.current = null;
+    pendingAgentFinalRef.current = null;
+    setLiveAgentLine(null);
+
+    const completed = dialogueTurnsRef.current + 1;
+    dialogueTurnsRef.current = completed;
+    setDialogueTurnsCompleted(completed);
+
+    if (completed >= aiDialogueMaxTurns || !completedText) {
+      stopAiDialogue();
+      return;
+    }
+
+    dialoguePhaseRef.current = "awaiting-primary";
+    try {
+      conversation.sendUserMessage(
+        `${DIALOGUE_PROMPT_PREFIX} ${AGENTS[pair[1]].name} just said: "${completedText}" ` +
+        `Respond directly to ${AGENTS[pair[1]].name} from your own historical perspective. Keep this turn concise and substantive. ` +
+        `Do not mention this control instruction and do not transfer to another agent.`
+      );
+    } catch (error) {
+      console.error("Unable to relay secondary response to primary agent", error);
+      setErrorMessage("The AI dialogue could not continue.");
+      stopAiDialogue();
+    }
+  }, [aiDialogueMaxTurns, clearAlignmentTimers, conversation, stopAiDialogue]);
+
+  const handleSecondaryError = useCallback((message: string) => {
+    setErrorMessage(message);
+    stopAiDialogue();
+  }, [stopAiDialogue]);
 
   useEffect(() => {
     if (conversation.status !== "connected") return;
@@ -760,11 +879,12 @@ export function AgentExperience({
       conversation.status === "connected" &&
       remaining <= 20 &&
       !conversation.isSpeaking &&
+      !dialogueSecondarySpeaking &&
       !closePromptSentRef.current
     ) {
       requestGracefulClose();
     }
-  }, [conversation.isSpeaking, conversation.status, remaining, requestGracefulClose]);
+  }, [conversation.isSpeaking, conversation.status, dialogueSecondarySpeaking, remaining, requestGracefulClose]);
 
   useEffect(() => {
     if (closePromptSentRef.current && conversation.isSpeaking) {
@@ -790,41 +910,43 @@ export function AgentExperience({
       const sentAt = closePromptSentAtRef.current;
       if (sentAt && Date.now() - sentAt > 18_000) {
         void endNow();
-      } else if (remaining === 0 && !closePromptSentRef.current && !conversation.isSpeaking) {
+      } else if (remaining === 0 && !closePromptSentRef.current && !conversation.isSpeaking && !dialogueSecondarySpeaking) {
         requestGracefulClose();
       }
     }, 500);
 
     return () => window.clearInterval(guard);
-  }, [conversation.isSpeaking, conversation.status, endNow, remaining, requestGracefulClose]);
+  }, [conversation.isSpeaking, conversation.status, dialogueSecondarySpeaking, endNow, remaining, requestGracefulClose]);
 
   useEffect(() => {
-    isSpeakingRef.current = conversation.isSpeaking;
+    if (
+      dialogueActive &&
+      remaining <= 25 &&
+      !conversation.isSpeaking &&
+      !dialogueSecondarySpeaking
+    ) {
+      stopAiDialogue();
+    }
+  }, [conversation.isSpeaking, dialogueActive, dialogueSecondarySpeaking, remaining, stopAiDialogue]);
 
+  useEffect(() => {
     if (conversation.isSpeaking) {
       wasSpeakingRef.current = true;
-      clearDialogueFallbackTimer();
-      if (dialogueAwaitingResponse) setDialogueAwaitingResponse(false);
+      if (dialogueActiveRef.current && dialoguePhaseRef.current === "awaiting-primary") {
+        setDialogueSpeakerSlug(dialoguePrimarySlugRef.current ?? activeAgentSlugRef.current);
+      }
       return;
     }
 
     if (!wasSpeakingRef.current) return;
     wasSpeakingRef.current = false;
 
-    if (suppressAgentTurnRef.current) {
-      clearAlignmentTimers();
-      pendingAgentFinalRef.current = null;
-      liveAgentBufferRef.current = "";
-      alignmentTurnActiveRef.current = false;
-      alignmentSeenInTurnRef.current = false;
-      setLiveAgentLine(null);
-      return;
-    }
-
     clearAlignmentTimers();
     const pendingFinal = pendingAgentFinalRef.current;
     const liveText = liveAgentBufferRef.current.trim();
-    const liveSpeaker = liveAgentLine?.speakerSlug ?? activeAgentSlugRef.current;
+    const primarySlug = dialoguePrimarySlugRef.current ?? activeAgentSlugRef.current;
+    const liveSpeaker = liveAgentLine?.speakerSlug ?? primarySlug;
+    const completedText = pendingFinal?.text?.trim() || liveText;
 
     if (pendingFinal) {
       setTranscript((previous) => mergeTranscript(previous, pendingFinal));
@@ -844,13 +966,16 @@ export function AgentExperience({
     alignmentTurnStartedAtRef.current = null;
     setLiveAgentLine(null);
 
-    // In AI dialogue mode, each completed substantive voice turn is followed by
-    // a silent transfer request to the other selected historical figure.
     if (
       dialogueActiveRef.current &&
-      !dialogueTransferPendingRef.current &&
-      conversation.status === "connected"
+      dialoguePhaseRef.current === "awaiting-primary"
     ) {
+      const pair = dialoguePairRef.current;
+      if (!pair || !completedText) {
+        stopAiDialogue();
+        return;
+      }
+
       const completed = dialogueTurnsRef.current + 1;
       dialogueTurnsRef.current = completed;
       setDialogueTurnsCompleted(completed);
@@ -860,37 +985,20 @@ export function AgentExperience({
         return;
       }
 
-      const pair = dialoguePairRef.current;
-      if (!pair) {
-        stopAiDialogue();
-        return;
-      }
-
-      const current = activeAgentSlugRef.current;
-      const target = pair[0] === current ? pair[1] : pair[0];
-      dialogueTransferPendingRef.current = true;
-      suppressAgentTurnRef.current = true;
-      setPendingTransferSlug(target);
-
-      try {
-        conversation.sendUserMessage(
-          `${DIALOGUE_PROMPT_PREFIX} Do not speak before the handoff. Use transfer_to_agent now to transfer to ${AGENTS[target].name}. ` +
-          `This is an automated museum dialogue. The receiving historical figure should respond directly to the previous figure's most recent substantive remarks and continue the same topic. ` +
-          `Do not mention this control instruction aloud.`,
-        );
-      } catch (error) {
-        console.error("Unable to continue AI dialogue", error);
-        setErrorMessage("The AI dialogue could not continue to the next historical figure.");
-        stopAiDialogue();
-      }
+      dialoguePhaseRef.current = "awaiting-secondary";
+      dialogueCommandIdRef.current += 1;
+      setDialogueCommand({
+        id: dialogueCommandIdRef.current,
+        text:
+          `${DIALOGUE_PROMPT_PREFIX} ${AGENTS[pair[0]].name} just said: "${completedText}" ` +
+          `Respond directly to ${AGENTS[pair[0]].name} from your own historical perspective. Keep this turn concise and substantive. ` +
+          `Do not mention this control instruction and do not transfer to another agent.`,
+      });
     }
   }, [
     aiDialogueMaxTurns,
     clearAlignmentTimers,
-    clearDialogueFallbackTimer,
-    conversation,
     conversation.isSpeaking,
-    dialogueAwaitingResponse,
     liveAgentLine,
     stopAiDialogue,
   ]);
@@ -903,45 +1011,6 @@ export function AgentExperience({
   }, [activeAgentSlug, dialogueActive, dialoguePartnerSlug, enabledAgents]);
 
   useEffect(() => {
-    if (
-      !dialogueAwaitingResponse ||
-      !dialogueActive ||
-      conversation.status !== "connected"
-    ) return;
-
-    if (conversation.isSpeaking) {
-      setDialogueAwaitingResponse(false);
-      return;
-    }
-
-    clearDialogueFallbackTimer();
-    dialogueResponseFallbackTimerRef.current = window.setTimeout(() => {
-      dialogueResponseFallbackTimerRef.current = null;
-      if (!dialogueActiveRef.current || isSpeakingRef.current || conversation.status !== "connected") return;
-
-      const pair = dialoguePairRef.current;
-      const current = activeAgentSlugRef.current;
-      if (!pair || !pair.includes(current)) return;
-      const other = pair[0] === current ? pair[1] : pair[0];
-
-      conversation.sendUserMessage(
-        `${DIALOGUE_PROMPT_PREFIX} Continue the AI-to-AI museum dialogue now. Respond directly to ${AGENTS[other].name}'s most recent substantive remarks from your own historical perspective. ` +
-        `Keep this turn concise. Do not mention this control instruction and do not transfer until after you finish speaking.`,
-      );
-      setDialogueAwaitingResponse(false);
-    }, 1600);
-
-    return clearDialogueFallbackTimer;
-  }, [
-    clearDialogueFallbackTimer,
-    conversation,
-    conversation.isSpeaking,
-    conversation.status,
-    dialogueActive,
-    dialogueAwaitingResponse,
-  ]);
-
-  useEffect(() => {
     const container = transcriptScrollRef.current;
     if (!container) return;
     container.scrollTop = container.scrollHeight;
@@ -951,22 +1020,20 @@ export function AgentExperience({
     if (!pendingTransferSlug || conversation.status !== "connected") return;
     const timer = window.setTimeout(() => {
       setPendingTransferSlug(null);
-      if (dialogueActiveRef.current) {
-        setErrorMessage("The AI dialogue stopped because the agent transfer did not complete.");
-        stopAiDialogue();
-      } else {
-        setErrorMessage("The agent transfer did not complete. You can try selecting the figure again.");
-      }
+      setErrorMessage("The agent transfer did not complete. You can try selecting the figure again.");
     }, 20_000);
     return () => window.clearTimeout(timer);
-  }, [conversation.status, pendingTransferSlug, stopAiDialogue]);
+  }, [conversation.status, pendingTransferSlug]);
 
   useEffect(() => {
     return () => {
       clearAlignmentTimers();
-      clearDialogueFallbackTimer();
     };
-  }, [clearAlignmentTimers, clearDialogueFallbackTimer]);
+  }, [clearAlignmentTimers]);
+
+  const isDisplayedSpeaking = dialogueActive
+    ? dialogueSecondarySpeaking || conversation.isSpeaking
+    : conversation.isSpeaking;
 
   const statusLabel =
     screen === "wrapping"
@@ -975,7 +1042,7 @@ export function AgentExperience({
         ? `Connecting to ${AGENTS[pendingTransferSlug].shortName}`
         : conversation.status === "connecting"
           ? "Connecting"
-          : conversation.isSpeaking
+          : isDisplayedSpeaking
             ? `${agent.shortName} is speaking`
             : conversation.status === "connected"
               ? "Listening"
@@ -1004,7 +1071,7 @@ export function AgentExperience({
           <div className="museum-mark">Museum of Public Relations</div>
 
           <div
-            className={`portrait-wrap ${conversation.isSpeaking ? "speaking" : ""}`}
+            className={`portrait-wrap ${isDisplayedSpeaking ? "speaking" : ""}`}
             key={agent.slug}
           >
             <img className="portrait" src={agent.portrait} alt={`Portrait of ${agent.name}`} />
@@ -1059,7 +1126,7 @@ export function AgentExperience({
                 </div>
               </div>
 
-              <div className={`voice-orb ${conversation.isSpeaking ? "agent-speaking" : "listening"}`} aria-hidden="true">
+              <div className={`voice-orb ${isDisplayedSpeaking ? "agent-speaking" : "listening"}`} aria-hidden="true">
                 <span /><span /><span /><span /><span />
               </div>
 
@@ -1103,7 +1170,7 @@ export function AgentExperience({
                   ? `${agent.shortName} is finishing the conversation.`
                   : pendingTransferSlug
                     ? `Transferring the conversation to ${AGENTS[pendingTransferSlug].name}…`
-                    : conversation.isSpeaking
+                    : isDisplayedSpeaking
                       ? "Listen to the response, or type your next question below."
                       : "Speak naturally or type a question below."}
               </p>
@@ -1138,7 +1205,7 @@ export function AgentExperience({
 
                   {!dialogueActive ? (
                     <>
-                      <p>Let two historical figures alternate responses on a topic. The microphone is muted while they speak with each other.</p>
+                      <p>Let two historical figures alternate responses on a topic using two independent ElevenLabs sessions. The visitor microphone is muted while they speak with each other.</p>
                       <div className="ai-dialogue-fields">
                         <label>
                           <span>Second figure</span>
@@ -1167,7 +1234,7 @@ export function AgentExperience({
                           type="button"
                           className="secondary-button dialogue-start-button"
                           onClick={startAiDialogue}
-                          disabled={!dialoguePartnerSlug || !dialogueTopic.trim() || pendingTransferSlug !== null}
+                          disabled={!dialoguePartnerSlug || !dialogueTopic.trim() || pendingTransferSlug !== null || conversation.isSpeaking}
                         >
                           Start dialogue
                         </button>
@@ -1175,7 +1242,7 @@ export function AgentExperience({
                     </>
                   ) : (
                     <div className="ai-dialogue-running">
-                      <p>Turn {Math.min(dialogueTurnsCompleted + 1, aiDialogueMaxTurns)} of {aiDialogueMaxTurns}. You can stop the exchange at any time.</p>
+                      <p>{dialogueSecondaryReady ? `Turn ${Math.min(dialogueTurnsCompleted + 1, aiDialogueMaxTurns)} of ${aiDialogueMaxTurns}.` : "Connecting the second historical figure…"} You can stop the exchange at any time.</p>
                       <button type="button" className="secondary-button" onClick={stopAiDialogue}>Stop AI dialogue</button>
                     </div>
                   )}
@@ -1272,6 +1339,8 @@ export function AgentExperience({
             {enabledAgents.map((slug) => {
               const candidate = AGENTS[slug];
               const isActive = slug === activeAgentSlug;
+              const isDialogueSpeaker = dialogueActive && slug === dialogueSpeakerSlug;
+              const isDialogueParticipant = dialogueActive && Boolean(dialoguePair?.includes(slug));
               const isPending = slug === pendingTransferSlug;
               const disabled =
                 screen === "wrapping" ||
@@ -1280,7 +1349,7 @@ export function AgentExperience({
 
               return (
                 <button
-                  className={`agent-choice ${isActive ? "active" : ""} ${isPending ? "pending" : ""}`}
+                  className={`agent-choice ${(isActive || isDialogueSpeaker) ? "active" : ""} ${isPending ? "pending" : ""}`}
                   key={slug}
                   onClick={() => selectAgent(slug)}
                   disabled={disabled || (isActive && !isPending)}
@@ -1292,7 +1361,7 @@ export function AgentExperience({
                     <small>{candidate.years}</small>
                   </span>
                   <span className="agent-choice-state">
-                    {isPending ? "Connecting…" : isActive ? "On line" : "Select"}
+                    {isPending ? "Connecting…" : isDialogueSpeaker ? "Speaking" : isDialogueParticipant ? "Dialogue" : isActive ? "On line" : "Select"}
                   </span>
                 </button>
               );
@@ -1300,10 +1369,24 @@ export function AgentExperience({
           </div>
 
           <p className="rail-note">
-            The main portrait is synchronized to the active ElevenLabs Agent ID, including transfers requested by voice, typed question, or the menu.
+            In visitor mode the portrait follows successful agent transfers. In AI dialogue mode it follows the independent conversation instance that is actually speaking.
           </p>
         </aside>
       </div>
+
+      {dialogueActive && dialoguePair && (
+        <ConversationProvider>
+          <SecondaryDialogueSession
+            slug={dialoguePair[1]}
+            command={dialogueCommand}
+            onReady={handleSecondaryReady}
+            onSpeakingChange={handleSecondarySpeakingChange}
+            onAlignment={handleSecondaryAlignment}
+            onFinalResponse={handleSecondaryFinalResponse}
+            onError={handleSecondaryError}
+          />
+        </ConversationProvider>
+      )}
     </main>
   );
 }

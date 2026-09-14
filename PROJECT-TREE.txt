@@ -1,25 +1,24 @@
-prmuseum-historical-voice-app/
+PRMuseum Historical Voice App v4.5
 ├── app/
 │   ├── api/
-│   │   └── token/
-│   │       └── route.ts
+│   │   ├── resolve-agent/route.ts
+│   │   ├── resolve-transfer/route.ts
+│   │   └── token/route.ts
 │   ├── globals.css
 │   ├── layout.tsx
 │   └── page.tsx
 ├── components/
 │   ├── AgentExperience.tsx
-│   └── HistoricalVoiceApp.tsx
+│   ├── HistoricalVoiceApp.tsx
+│   └── SecondaryDialogueSession.tsx
 ├── lib/
 │   ├── agents.ts
 │   └── serverAgents.ts
 ├── public/
 │   └── portraits/
-│       ├── arthur-page.svg
-│       ├── bernays.svg
-│       ├── ivy-lee.svg
-│       └── lippmann.svg
 ├── .env.example
-├── .gitignore
+├── AI-DIALOGUE-SETUP.txt
+├── ELEVENLABS-AGENT-SYNC-SETUP.txt
 ├── ELEVENLABS-MULTI-AGENT-SETUP.txt
 ├── ELEVENLABS-PROMPT-ADDON.txt
 ├── next-env.d.ts

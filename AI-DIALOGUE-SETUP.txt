@@ -1,8 +1,15 @@
-PRMuseum AI-to-AI Dialogue — v4.4
+PRMuseum AI-to-AI Dialogue — v4.5
 =================================
 
-This feature does NOT require a new ElevenLabs tool or a new prompt block.
-It reuses the app's existing transfer_to_agent behavior.
+Architecture
+------------
+AI dialogue no longer uses transfer_to_agent. It runs two independent ElevenLabs
+voice conversations at the same time. The current visitor conversation is the
+primary session; a second hidden ConversationProvider starts the selected partner.
+
+The app waits until one voice has completely stopped speaking, captures the
+completed response, then sends that text to the other session with sendUserMessage().
+No transfer request is issued during AI dialogue.
 
 Vercel
 ------
@@ -15,22 +22,33 @@ PRMUSEUM_AI_DIALOGUE_ENABLED=false
 Optional maximum autonomous voice turns (2–12):
 PRMUSEUM_AI_DIALOGUE_MAX_TURNS=6
 
-ElevenLabs
-----------
-1. Keep your currently working transfer rules.
-2. Each pair of agents you want to use in AI dialogue must be able to transfer to one another.
-3. Do not add special broad transfer conditions just for this feature.
-4. Keep client events enabled for:
-   - audio
-   - agent_tool_request
-   - agent_tool_response
+Requirements
+------------
+1. Your ElevenLabs plan/workspace must permit at least 2 concurrent conversations.
+2. Keep the `audio` client event enabled on every agent used in dialogue so the
+   live transcript can grow from speech alignment.
+3. No special transfer rules are required for AI dialogue. Keep your normal
+   transfer rules only for visitor-requested handoffs.
+4. No new API-key scope is required beyond the permissions already used to create
+   private conversation tokens.
+
+First-message handling
+----------------------
+The hidden secondary session starts muted and with output volume set to zero, then
+waits until it has remained silent before the app begins the exchange. This keeps
+a configured First Message from becoming part of the AI dialogue. If a brief greeting
+ever leaks through on a particular browser/device, the strongest optional safeguard
+is to disable that agent's First Message or enable a First Message override in the
+agent Security settings and suppress it for dialogue sessions.
 
 Behavior
 --------
-The visitor begins a normal conversation, chooses a second figure and a topic,
-and clicks Start dialogue. The current agent speaks first. After each substantive
-voice turn, the app issues an internal transfer request to the other selected
-agent. The same ElevenLabs conversation and transcript are retained across the
-handoff. The microphone is muted while the two figures alternate.
-
-Stop AI dialogue restores the visitor's previous microphone state.
+- Visitor microphone is muted while AI dialogue is active.
+- Only one agent is prompted at a time.
+- The next agent is not prompted until the current voice has stopped.
+- The main portrait switches only when that conversation instance reports that it
+  is actually speaking.
+- Stop AI dialogue ends the secondary session and restores the visitor microphone.
+- The turn limit prevents runaway autonomous conversations.
+- Near the 10-minute session limit, dialogue mode stops between voice turns rather
+  than cutting off a speaker.

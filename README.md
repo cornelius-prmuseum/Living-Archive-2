@@ -1,16 +1,17 @@
-# PRMuseum Historical Voice App — Multi-Agent v4.4
+# PRMuseum Historical Voice App — Multi-Agent v4.5
 
 A Next.js/Vercel frontend for PRMuseum historical voice agents powered by ElevenLabs.
 
-## What changed in v4.4
+## What changed in v4.5
 
-- The separate subtitle box has been replaced by an **always-visible, scrollable live transcript**.
-- Visitor speech/text appears in the transcript normally.
-- Agent text grows **word-by-word from ElevenLabs audio-alignment timing**, so the transcript follows the words being spoken rather than jumping immediately to the completed LLM response.
-- The transcript automatically scrolls to the current line and remains available after the conversation ends.
-- Added an optional **AI-to-AI dialogue mode**. Two enabled historical figures can alternate voice responses in the same ElevenLabs conversation.
-- AI dialogue is controlled entirely from the backend with `PRMUSEUM_AI_DIALOGUE_ENABLED` and is OFF by default.
-- AI dialogue has a server-side maximum-turn safety limit (`PRMUSEUM_AI_DIALOGUE_MAX_TURNS`, default 6).
+- Keeps the full, scrollable **live transcript** from v4.4.
+- Agent responses grow word-by-word from ElevenLabs audio-alignment timing.
+- Replaces the incorrect transfer-based AI dialogue experiment with **two independent ElevenLabs voice sessions**.
+- AI dialogue never calls `transfer_to_agent`; transfers remain reserved for genuine visitor-requested handoffs.
+- The next AI is prompted only after the current voice has finished speaking.
+- During AI dialogue, the large portrait follows the conversation instance that is **actually speaking**.
+- The hidden secondary session starts with its microphone muted and output volume at zero while it initializes.
+- The 10-minute timer will stop dialogue mode between turns rather than cutting off a secondary speaker.
 
 Existing features remain:
 
@@ -18,7 +19,7 @@ Existing features remain:
 - Right-side agent selector
 - Voice and typed questions
 - Three suggested questions per agent
-- Transfer-event profile synchronization
+- Normal visitor-requested agent transfers
 - Server-side agent enable/disable list
 - 10-minute session timer
 - Server-side WebRTC token generation
@@ -47,79 +48,67 @@ After changing Vercel environment variables, redeploy Production.
 
 ## Full live transcript
 
-The live transcript uses ElevenLabs `onAudioAlignment` character timing. The current agent line is progressively filled as the audio is spoken. When that voice turn ends, the completed agent response is committed to the transcript and the next turn begins below it.
+The current spoken response grows directly inside a scrollable transcript using ElevenLabs `onAudioAlignment`. When that voice turn ends, its completed text becomes a permanent transcript entry.
 
-For every agent that can start a call, enable the `audio` client event in ElevenLabs under **Advanced → Client events**.
-
-The transcript falls back to the completed agent response if audio alignment is unavailable.
+Enable the `audio` client event for every agent that can participate.
 
 ## AI-to-AI dialogue mode
 
-This is an **orchestrated alternating dialogue**, not two simultaneous audio streams.
+AI dialogue uses **two independent conversations**:
 
-When enabled in Vercel, a visitor can:
+```text
+Primary agent session                  Secondary agent session
+        |                                      |
+        | speaks                               |
+        |------ completed response ----------->|
+        |                                      | speaks
+        |<----- completed response ------------|
+        | speaks                               |
+```
 
-1. Begin a normal voice conversation with one historical figure.
-2. Choose a second enabled historical figure.
-3. Enter a discussion topic.
-4. Press **Start dialogue**.
+The visitor starts with the currently connected figure, chooses a second enabled figure and a topic, then presses **Start dialogue**. The app mutes both microphones, starts the second private voice session, and alternates completed text between the two sessions with `sendUserMessage()`.
 
-The app mutes the visitor microphone, asks the current figure to make the opening statement, then uses the existing ElevenLabs `transfer_to_agent` flow to alternate the same conversation between the two figures. ElevenLabs preserves the transcript/context across transfers, so the receiving figure can respond to the prior figure's remarks.
+There is **no `transfer_to_agent` call during AI dialogue**. This avoids interrupting a speaker and avoids using the transfer system as a turn-taking mechanism.
 
-Only one voice speaks at a time. This avoids audio feedback and makes the transcript/profile identity much easier to follow.
+### Concurrency requirement
 
-The visitor can press **Stop AI dialogue** at any point; the app restores the microphone to its prior state and the normal visitor conversation can continue.
+The ElevenLabs workspace must support at least **2 concurrent conversations** while AI dialogue is running. Normal visitor mode still uses only one.
 
 ### Backend switch
 
-To enable:
+Enable:
 
 ```env
 PRMUSEUM_AI_DIALOGUE_ENABLED=true
 ```
 
-To remove the feature from the UI:
+Disable/remove the feature:
 
 ```env
 PRMUSEUM_AI_DIALOGUE_ENABLED=false
 ```
 
-Optional turn limit:
+Maximum turns:
 
 ```env
 PRMUSEUM_AI_DIALOGUE_MAX_TURNS=6
 ```
 
-The app clamps this value between 2 and 12 turns to prevent an accidental runaway autonomous conversation.
+The value is clamped between 2 and 12.
 
-### ElevenLabs configuration for AI dialogue
+### ElevenLabs configuration
 
-No additional API-key scope is required beyond what the existing app already uses.
+No special transfer rules are needed for AI dialogue. Keep whatever transfer rules already work for normal visitor-requested handoffs.
 
-The selected agents must already be able to transfer to one another through your normal `transfer_to_agent` configuration. **Do not rewrite otherwise-working transfer rules just for AI dialogue.** The app sends explicit internal transfer requests using the same pathway as the right-side agent selector.
+For live word-timed transcription, keep the `audio` client event enabled. For normal transfer-event profile synchronization, keep `agent_tool_request` and `agent_tool_response` enabled.
 
-For the existing transfer-event profile synchronization, keep these client events enabled:
-
-```text
-agent_tool_request
-agent_tool_response
-```
-
-For the word-timed live transcript, also enable:
-
-```text
-audio
-```
+The hidden secondary dialogue conversation starts muted and with output volume zero, waits until it has remained silent, and only becomes audible immediately before its first relayed dialogue response.
 
 ## Profile synchronization
 
-v4.4 retains v4.3's transfer-event profile sync. The portrait/name stays on the current figure until ElevenLabs reports a successful `transfer_to_agent` system-tool response, then the app switches to the receiving figure.
-
-The server reads the source agent's transfer configuration through `/api/resolve-transfer`, so the ElevenLabs API key should have Conversational AI / Agents **Read** and **Write**.
+Normal visitor mode keeps v4.3's successful-transfer-event profile sync. AI dialogue uses a stronger rule: the portrait changes when the corresponding independent conversation reports `isSpeaking=true`.
 
 ## Agent availability
-
-Use:
 
 ```env
 PRMUSEUM_ENABLED_AGENTS=bernays,ivy-lee,lippmann,arthur-page
@@ -128,8 +117,6 @@ PRMUSEUM_ENABLED_AGENTS=bernays,ivy-lee,lippmann,arthur-page
 Remove a slug to hide/disable that agent without deleting its Agent ID.
 
 ## Timer
-
-The frontend defaults to 600 seconds (10 minutes):
 
 ```env
 NEXT_PUBLIC_SESSION_SECONDS=600
@@ -145,11 +132,12 @@ See `wordpress-embed.html`. The iframe must include:
 allow="microphone; autoplay"
 ```
 
-## Files you will edit most often
+## Main files
 
 ```text
-lib/agents.ts                       Names, bios, portraits, suggested questions
-lib/serverAgents.ts                 Server Agent IDs, availability, backend feature flags
-components/AgentExperience.tsx      Conversation UI, transcript, transfers, AI dialogue, timer
-app/globals.css                     Styling
+lib/agents.ts                          Names, bios, portraits, suggested questions
+lib/serverAgents.ts                    Agent IDs, availability, backend flags
+components/AgentExperience.tsx         Primary conversation/UI/orchestrator
+components/SecondaryDialogueSession.tsx Independent second ElevenLabs session
+app/globals.css                        Styling
 ```
