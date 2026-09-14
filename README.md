@@ -151,3 +151,17 @@ components/AgentExperience.tsx      Main UI, audio-aligned subtitles, identity s
 app/globals.css                     Styling
 ELEVENLABS-MULTI-AGENT-SETUP.txt    ElevenLabs setup instructions
 ```
+
+## v4.3 — transfer-event profile synchronization
+
+Profile identity no longer depends on an agent remembering to call a UI client tool.
+The app listens for ElevenLabs `agent_tool_request` and `agent_tool_response` events for
+the built-in `transfer_to_agent` system tool. It resolves the destination from the live
+ElevenLabs transfer configuration and changes the profile only after the transfer tool
+reports success.
+
+ElevenLabs setup: enable `agent_tool_request` and `agent_tool_response` under Client
+Events for every PRMuseum agent that can start a call. Also give the server API key
+Conversational AI / Agents **Read** in addition to **Write**, because `/api/resolve-transfer`
+reads the source agent's transfer configuration. Keep your existing transfer rules;
+do not rewrite them for portrait synchronization.

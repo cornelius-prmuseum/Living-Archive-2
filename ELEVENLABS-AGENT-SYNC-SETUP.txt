@@ -1,0 +1,48 @@
+PRMUSEUM — PROFILE / VOICE SYNCHRONIZATION (v4.3)
+=================================================
+
+IMPORTANT: Do not rewrite your Transfer Rules for the display feature.
+Keep/revert the transfer conditions that make your agents transfer reliably.
+
+This version observes ElevenLabs' transfer_to_agent system-tool events directly.
+The receiving agent no longer has to remember to call syncActiveAgent.
+
+ELEVENLABS CLIENT EVENTS
+------------------------
+For every agent that can START a conversation in PRMuseum, enable these Client Events:
+
+- audio
+- agent_tool_request
+- agent_tool_response
+
+Because ElevenLabs says the starting/parent agent's Client Events are inherited by
+agents reached by transfer, this is what lets the webpage observe handoffs throughout
+the same call. Enabling the same events on all PRMuseum agents is recommended because
+any one of them can be the starting agent.
+
+API KEY
+-------
+The app already needs Conversational AI / Agents Write (convai_write) for the WebRTC
+conversation token. v4.3 also reads the source agent's current transfer configuration
+so it can translate transfer_to_agent's agent_number into the destination Agent ID.
+Enable Conversational AI / Agents Read as well on the same Vercel API key.
+
+PROMPTS / CLIENT TOOLS
+----------------------
+You may remove the previous prompt requirement that told agents to call
+syncActiveAgent or setActiveAgent after a transfer. You may also remove those client
+tools from ElevenLabs if they were added only for portrait synchronization.
+
+The app keeps backward-compatible handlers for them, but no longer depends on them.
+
+HOW THE PORTRAIT NOW CHANGES
+----------------------------
+1. Current agent calls ElevenLabs' built-in transfer_to_agent.
+2. ElevenLabs sends agent_tool_request to the browser.
+3. The app resolves that transfer rule to its actual destination Agent ID.
+4. The existing portrait stays on screen while the transfer is pending.
+5. ElevenLabs sends agent_tool_response when transfer_to_agent succeeds.
+6. Only then does the app switch name, portrait and recommended questions.
+
+This works for transfers requested by speech, typed questions, or the right-hand menu,
+because all three ultimately use the same ElevenLabs transfer_to_agent system tool.

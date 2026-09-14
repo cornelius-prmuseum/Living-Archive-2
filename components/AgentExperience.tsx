@@ -58,6 +58,25 @@ const CLOSE_PROMPT =
 
 const SWITCH_PROMPT_PREFIX = "[MUSEUM UI AGENT SWITCH — not spoken by the visitor]";
 
+
+function isSubtitleSentenceComplete(text: string) {
+  const trimmed = text.trimEnd();
+  if (!/[.!?][\"'’”)]*$/.test(trimmed)) return false;
+
+  // Avoid treating common abbreviations/initials as sentence endings while the
+  // words are being revealed (for example, “Mr. Lee” or “U.S. policy”).
+  const withoutClosers = trimmed.replace(/[\"'’”)]*$/, "");
+  const lastToken = withoutClosers.split(/\s+/).at(-1)?.toLowerCase() ?? "";
+  const abbreviations = new Set([
+    "mr.", "mrs.", "ms.", "dr.", "prof.", "sr.", "jr.", "st.", "vs.",
+    "etc.", "e.g.", "i.e.", "u.s.", "u.k.",
+  ]);
+  if (abbreviations.has(lastToken)) return false;
+  if (/^(?:[a-z]\.){1,4}$/i.test(lastToken)) return false;
+
+  return true;
+}
+
 function formatClock(seconds: number) {
   const safe = Math.max(0, seconds);
   const minutes = Math.floor(safe / 60);
@@ -128,6 +147,10 @@ export function AgentExperience({
   const [activeAgentSlug, setActiveAgentSlug] = useState<AgentSlug>(initialAgent.slug);
   const [pendingTransferSlug, setPendingTransferSlug] = useState<AgentSlug | null>(null);
   const activeAgentSlugRef = useRef<AgentSlug>(initialAgent.slug);
+  // ElevenLabs emits transfer_to_agent as a real system-tool request/response.
+  // Track the destination by tool_call_id and only switch the portrait after
+  // ElevenLabs reports that the transfer itself succeeded.
+  const transferTargetByCallRef = useRef<Map<string, Promise<AgentSlug | null>>>(new Map());
   const agent = AGENTS[activeAgentSlug];
   const noAgentsAvailable = enabledAgents.length === 0;
 
@@ -155,6 +178,10 @@ export function AgentExperience({
   const wasSpeakingRef = useRef(false);
   const subtitleTimersRef = useRef<number[]>([]);
   const subtitleBufferRef = useRef("");
+  // Only one sentence is shown at a time. Once a sentence reaches terminal
+  // punctuation, keep it visible until the first word of the next sentence is
+  // actually spoken, then clear the old sentence and begin the new one.
+  const subtitleSentenceCompleteRef = useRef(false);
   const subtitleTurnActiveRef = useRef(false);
   const alignmentSeenInTurnRef = useRef(false);
   // ElevenLabs emits audio alignment in multiple packets. The character timing
@@ -171,6 +198,7 @@ export function AgentExperience({
   const resetSubtitleStream = useCallback((clearVisible = true) => {
     clearSubtitleTimers();
     subtitleBufferRef.current = "";
+    subtitleSentenceCompleteRef.current = false;
     subtitleTurnActiveRef.current = false;
     alignmentSeenInTurnRef.current = false;
     subtitlePacketCursorMsRef.current = 0;
@@ -216,6 +244,54 @@ export function AgentExperience({
     }
   }, [confirmActiveAgent, enabledAgents]);
 
+  const resolveTransferTarget = useCallback(async (
+    sourceSlug: AgentSlug,
+    parameters: Record<string, unknown>,
+  ): Promise<AgentSlug | null> => {
+    // Some future/current payloads may expose an Agent ID directly. Prefer it.
+    const directAgentId = typeof parameters.agent_id === "string"
+      ? parameters.agent_id.trim()
+      : "";
+
+    try {
+      if (directAgentId) {
+        const directResponse = await fetch(
+          `/api/resolve-agent?agent_id=${encodeURIComponent(directAgentId)}`,
+          { cache: "no-store" },
+        );
+        const directData = (await directResponse.json()) as { slug?: string };
+        if (directResponse.ok && isAgentSlug(directData.slug) && enabledAgents.includes(directData.slug)) {
+          return directData.slug;
+        }
+      }
+
+      const rawNumber = parameters.agent_number;
+      const agentNumber = typeof rawNumber === "number"
+        ? rawNumber
+        : typeof rawNumber === "string" && rawNumber.trim() !== ""
+          ? Number(rawNumber)
+          : NaN;
+
+      if (!Number.isInteger(agentNumber) || agentNumber < 0) return null;
+
+      const response = await fetch(
+        `/api/resolve-transfer?source=${encodeURIComponent(sourceSlug)}&agent_number=${agentNumber}`,
+        { cache: "no-store" },
+      );
+      const data = (await response.json()) as { slug?: string; error?: string };
+
+      if (!response.ok || !isAgentSlug(data.slug) || !enabledAgents.includes(data.slug)) {
+        console.warn("Unable to resolve transfer destination", data.error || data);
+        return null;
+      }
+
+      return data.slug;
+    } catch (error) {
+      console.error("Unable to resolve transfer destination", error);
+      return null;
+    }
+  }, [enabledAgents]);
+
   const scheduleAlignedSubtitle = useCallback((payload: unknown) => {
     const alignment = normalizeAudioAlignment(payload);
     if (!alignment || alignment.chars.length === 0) return;
@@ -225,6 +301,7 @@ export function AgentExperience({
     if (!subtitleTurnActiveRef.current) {
       clearSubtitleTimers();
       subtitleBufferRef.current = "";
+      subtitleSentenceCompleteRef.current = false;
       subtitleTurnActiveRef.current = true;
       alignmentSeenInTurnRef.current = true;
       subtitlePacketCursorMsRef.current = 0;
@@ -276,8 +353,24 @@ export function AgentExperience({
       const delay = Math.max(0, targetMs - elapsedMs);
 
       const timer = window.setTimeout(() => {
+        const hasSpokenContent = /\S/.test(chunk);
+
+        // Keep the completed sentence on screen during the natural pause after
+        // punctuation. Only replace it when the next spoken word arrives.
+        if (subtitleSentenceCompleteRef.current && hasSpokenContent) {
+          subtitleBufferRef.current = "";
+          subtitleSentenceCompleteRef.current = false;
+        }
+
         subtitleBufferRef.current += chunk;
-        setSubtitle({ text: subtitleBufferRef.current, speakerSlug });
+        const visibleSentence = subtitleBufferRef.current.trimStart();
+        setSubtitle({ text: visibleSentence, speakerSlug });
+
+        // Treat normal sentence-ending punctuation (including a trailing quote
+        // or parenthesis) as the handoff point to the next subtitle sentence.
+        if (isSubtitleSentenceComplete(subtitleBufferRef.current)) {
+          subtitleSentenceCompleteRef.current = true;
+        }
       }, delay);
       subtitleTimersRef.current.push(timer);
       index = end;
@@ -309,9 +402,50 @@ export function AgentExperience({
       setErrorMessage("");
     },
     onDisconnect: () => {
+      transferTargetByCallRef.current.clear();
       setPendingTransferSlug(null);
       resetSubtitleStream(false);
       setScreen((current) => (current === "error" ? current : "finished"));
+    },
+    onAgentToolRequest: (request: any) => {
+      if (request?.tool_name !== "transfer_to_agent" || request?.tool_type !== "system") return;
+
+      const toolCallId = String(request?.tool_call_id || "");
+      if (!toolCallId) return;
+
+      const sourceSlug = activeAgentSlugRef.current;
+      const parameters = request?.parameters && typeof request.parameters === "object"
+        ? request.parameters as Record<string, unknown>
+        : {};
+
+      const targetPromise = resolveTransferTarget(sourceSlug, parameters).then((slug) => {
+        if (slug) setPendingTransferSlug(slug);
+        return slug;
+      });
+
+      transferTargetByCallRef.current.set(toolCallId, targetPromise);
+    },
+    onAgentToolResponse: async (response: any) => {
+      if (response?.tool_name !== "transfer_to_agent" || response?.tool_type !== "system") return;
+
+      const toolCallId = String(response?.tool_call_id || "");
+      const targetPromise = transferTargetByCallRef.current.get(toolCallId);
+      transferTargetByCallRef.current.delete(toolCallId);
+
+      if (response?.is_error) {
+        setPendingTransferSlug(null);
+        return;
+      }
+
+      const target = targetPromise ? await targetPromise : null;
+      if (target) {
+        // This is the authoritative UI switch: ElevenLabs has reported that its
+        // transfer_to_agent system tool completed successfully.
+        confirmActiveAgent(target);
+      } else {
+        setPendingTransferSlug(null);
+        console.warn("ElevenLabs transferred agents, but the destination could not be mapped to a PRMuseum profile.");
+      }
     },
     onAudioAlignment: (alignment: unknown) => {
       scheduleAlignedSubtitle(alignment);
@@ -389,6 +523,7 @@ export function AgentExperience({
     setTranscript([]);
     setRemaining(sessionSeconds);
     setConversationId(null);
+    transferTargetByCallRef.current.clear();
     setPendingTransferSlug(null);
     resetSessionRefs();
 
@@ -465,15 +600,15 @@ export function AgentExperience({
       return;
     }
 
-    // Keep the current portrait/name until the receiving agent confirms its actual
-    // ElevenLabs Agent ID through syncActiveAgent. This makes the UI follow the
-    // agent that truly owns the live voice session.
+    // Keep the current portrait/name until ElevenLabs reports a successful
+    // transfer_to_agent system-tool response. The tool event, not the prompt,
+    // controls which profile is displayed.
     setPendingTransferSlug(slug);
     const target = AGENTS[slug];
 
     try {
       conversation.sendUserMessage(
-        `${SWITCH_PROMPT_PREFIX} The visitor selected ${target.name} in the museum interface. Do not read or discuss this control message. Use transfer_to_agent now to transfer the ongoing conversation to ${target.name}. Do not change the PRMuseum display for the destination yourself; the receiving agent must call syncActiveAgent immediately after it becomes active and before its first substantive spoken response. Preserve the existing conversation context.`,
+        `${SWITCH_PROMPT_PREFIX} The visitor selected ${target.name} in the museum interface. Do not read or discuss this control message. Use transfer_to_agent now to transfer the ongoing conversation to ${target.name}. Preserve the existing conversation context. The webpage will update the displayed profile from ElevenLabs transfer events; do not call any display-sync tool.`,
       );
     } catch (error) {
       console.error("Unable to request agent transfer", error);
@@ -568,6 +703,7 @@ export function AgentExperience({
       if (subtitle) {
         const timer = window.setTimeout(() => {
           subtitleBufferRef.current = "";
+          subtitleSentenceCompleteRef.current = false;
           setSubtitle(null);
         }, 1800);
         return () => window.clearTimeout(timer);
