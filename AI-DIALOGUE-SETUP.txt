@@ -56,3 +56,23 @@ Behavior
 
 v4.5.3 NOTE
 The secondary dialogue participant now uses the direct ElevenLabs JavaScript Conversation.startSession API, outside the primary React ConversationProvider. This guarantees a genuinely independent second session and adds visible lifecycle status (fetching token, connecting, warming up, ready, relay sent, speaking).
+
+
+IMPORTANT FOR v4.5.4 AND LATER — SECONDARY FIRST MESSAGE
+--------------------------------------------------------
+For every agent that may appear as the SECOND participant in AI-to-AI dialogue:
+
+1. Open the agent in ElevenLabs.
+2. Go to Security / Overrides.
+3. Enable the First message override.
+
+The website starts the hidden secondary conversation with firstMessage set to an
+empty string. This prevents that agent's normal visitor greeting from speaking over
+the first dialogue turn. ElevenLabs requires the First message override permission
+to be enabled before a client may replace it.
+
+You do NOT need to remove the agent's normal First Message in ElevenLabs; normal
+visitor conversations can continue using it.
+
+The relay now queues commands while the secondary session is connecting, so a turn
+can no longer be silently dropped if Agent A finishes before Agent B is ready.

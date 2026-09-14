@@ -141,3 +141,7 @@ components/AgentExperience.tsx         Primary conversation/UI/orchestrator
 components/SecondaryDialogueSession.tsx Independent second ElevenLabs session
 app/globals.css                        Styling
 ```
+
+
+## AI dialogue first-message requirement
+Enable **Security → Overrides → First message** on every ElevenLabs agent that may be used as the second AI-dialogue participant. The app overrides that secondary session greeting to blank so the two voices never begin by talking over one another.

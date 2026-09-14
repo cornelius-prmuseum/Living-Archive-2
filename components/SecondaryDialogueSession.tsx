@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { Conversation } from "@elevenlabs/react";
+import { Conversation } from "@elevenlabs/client";
 import type { AgentSlug } from "@/lib/agents";
 
 export type DialogueCommand = {
@@ -14,6 +14,7 @@ export type SecondaryDialogueStatus =
   | "connecting"
   | "warming-up"
   | "ready"
+  | "relay-queued"
   | "relay-sent"
   | "speaking"
   | "waiting-final"
@@ -64,16 +65,10 @@ export function SecondaryDialogueSession({
   const armedRef = useRef(false);
   const speakingRef = useRef(false);
   const lastCommandIdRef = useRef<number | null>(null);
-  const readyTimerRef = useRef<number | null>(null);
+  const pendingCommandRef = useRef<DialogueCommand | null>(null);
   const responseWatchdogRef = useRef<number | null>(null);
   const disposedRef = useRef(false);
-
-  const clearReadyTimer = () => {
-    if (readyTimerRef.current !== null) {
-      window.clearTimeout(readyTimerRef.current);
-      readyTimerRef.current = null;
-    }
-  };
+  const sendingRef = useRef(false);
 
   const clearWatchdog = () => {
     if (responseWatchdogRef.current !== null) {
@@ -82,17 +77,72 @@ export function SecondaryDialogueSession({
     }
   };
 
-  const scheduleReady = () => {
-    if (disposedRef.current || readyRef.current || armedRef.current || speakingRef.current) return;
-    clearReadyTimer();
-    onStatus("warming-up");
-    readyTimerRef.current = window.setTimeout(() => {
-      readyTimerRef.current = null;
-      if (disposedRef.current || speakingRef.current || armedRef.current || !sessionRef.current) return;
-      readyRef.current = true;
-      onReady(true);
-      onStatus("ready");
-    }, 1200);
+  const reportOverrideError = (error: unknown) => {
+    const raw = error instanceof Error ? error.message : String(error ?? "");
+    const lower = raw.toLowerCase();
+    if (lower.includes("override") || lower.includes("first message") || lower.includes("first_message")) {
+      return "The second agent could not start silently. In ElevenLabs, open this agent → Security and enable the First message override, then try AI dialogue again.";
+    }
+    return raw || "Unable to start the second historical figure.";
+  };
+
+  const dispatchPendingCommand = async () => {
+    if (
+      disposedRef.current ||
+      sendingRef.current ||
+      !readyRef.current ||
+      speakingRef.current ||
+      !sessionRef.current ||
+      !pendingCommandRef.current
+    ) {
+      return;
+    }
+
+    const queued = pendingCommandRef.current;
+    if (lastCommandIdRef.current === queued.id) {
+      pendingCommandRef.current = null;
+      return;
+    }
+
+    sendingRef.current = true;
+    lastCommandIdRef.current = queued.id;
+    pendingCommandRef.current = null;
+    armedRef.current = true;
+
+    try {
+      const session = sessionRef.current;
+      session.setMicMuted(true);
+      await session.setVolume({ volume: 1 });
+      if (disposedRef.current) return;
+
+      onStatus("relay-sent");
+      session.sendUserMessage(queued.text);
+
+      clearWatchdog();
+      responseWatchdogRef.current = window.setTimeout(() => {
+        responseWatchdogRef.current = null;
+        if (!disposedRef.current && !speakingRef.current) {
+          onStatus("error");
+          onError(
+            "The second ElevenLabs session received the relay but did not begin speaking within 15 seconds. Check the agent's response behavior and your ElevenLabs concurrency limit.",
+          );
+        }
+      }, 15_000);
+    } catch (error) {
+      console.error("Unable to send relay to direct secondary session", error);
+      onStatus("error");
+      onError("The AI dialogue could not send the next turn to the second historical figure.");
+    } finally {
+      sendingRef.current = false;
+    }
+  };
+
+  const markReady = () => {
+    if (disposedRef.current || speakingRef.current || !sessionRef.current) return;
+    readyRef.current = true;
+    onReady(true);
+    onStatus("ready");
+    void dispatchPendingCommand();
   };
 
   useEffect(() => {
@@ -101,6 +151,8 @@ export function SecondaryDialogueSession({
     armedRef.current = false;
     speakingRef.current = false;
     lastCommandIdRef.current = null;
+    pendingCommandRef.current = null;
+    sendingRef.current = false;
     onReady(false);
     onSpeakingChange(false);
 
@@ -117,6 +169,14 @@ export function SecondaryDialogueSession({
         onStatus("connecting");
         const session = await Conversation.startSession({
           conversationToken: data.token,
+          // The secondary dialogue session must never emit its normal visitor greeting.
+          // ElevenLabs requires Security → Overrides → First message to be enabled
+          // for this per-conversation override.
+          overrides: {
+            agent: {
+              firstMessage: "",
+            },
+          },
           onConnect: () => {
             if (disposedRef.current) return;
             onStatus("warming-up");
@@ -135,14 +195,15 @@ export function SecondaryDialogueSession({
             speakingRef.current = speaking;
 
             if (speaking) {
-              clearReadyTimer();
               clearWatchdog();
               if (armedRef.current) {
                 onSpeakingChange(true);
                 onStatus("speaking");
               } else {
-                // A configured First Message may play while the hidden session warms up.
+                // Defensive fallback: if a dashboard greeting somehow still fires,
+                // keep it silent and do not treat it as a dialogue turn.
                 onStatus("warming-up");
+                void sessionRef.current?.setVolume?.({ volume: 0 });
               }
               return;
             }
@@ -151,7 +212,8 @@ export function SecondaryDialogueSession({
               onSpeakingChange(false);
               onStatus("waiting-final");
             } else {
-              scheduleReady();
+              // Any unexpected startup speech has now ended; the relay may proceed.
+              markReady();
             }
           },
           onAudioAlignment: (alignment: unknown) => {
@@ -166,11 +228,7 @@ export function SecondaryDialogueSession({
             if (disposedRef.current) return;
             console.error("Secondary dialogue direct session error", error);
             onStatus("error");
-            onError(
-              typeof error === "string"
-                ? error
-                : "The second historical figure's ElevenLabs session encountered an error.",
-            );
+            onError(reportOverrideError(error));
           },
         });
 
@@ -183,15 +241,14 @@ export function SecondaryDialogueSession({
         session.setMicMuted(true);
         await session.setVolume({ volume: 0 });
 
-        // If there is no First Message, no mode transition may follow connection.
-        // This timer makes the session ready after a short quiet warm-up. If a
-        // First Message begins, onModeChange cancels/restarts it.
-        scheduleReady();
+        // With firstMessage overridden to blank there is no greeting to wait out.
+        // startSession has resolved, so the independent conversation is ready.
+        markReady();
       } catch (error) {
         if (disposedRef.current) return;
         console.error("Unable to start direct secondary dialogue session", error);
         onStatus("error");
-        onError(error instanceof Error ? error.message : "Unable to start the second historical figure.");
+        onError(reportOverrideError(error));
       }
     }
 
@@ -199,11 +256,12 @@ export function SecondaryDialogueSession({
 
     return () => {
       disposedRef.current = true;
-      clearReadyTimer();
       clearWatchdog();
       readyRef.current = false;
       armedRef.current = false;
       speakingRef.current = false;
+      pendingCommandRef.current = null;
+      sendingRef.current = false;
       onReady(false);
       onSpeakingChange(false);
 
@@ -225,40 +283,21 @@ export function SecondaryDialogueSession({
   }, [slug]);
 
   useEffect(() => {
-    if (!command || !readyRef.current || !sessionRef.current) return;
+    if (!command) return;
     if (lastCommandIdRef.current === command.id) return;
 
-    lastCommandIdRef.current = command.id;
-    armedRef.current = true;
-    const commandText = command.text;
-    const session = sessionRef.current;
-
-    async function send() {
-      try {
-        await session.setVolume({ volume: 1 });
-        session.setMicMuted(true);
-        onStatus("relay-sent");
-        session.sendUserMessage(commandText);
-
-        clearWatchdog();
-        responseWatchdogRef.current = window.setTimeout(() => {
-          responseWatchdogRef.current = null;
-          if (!disposedRef.current && !speakingRef.current) {
-            onStatus("error");
-            onError(
-              "The second ElevenLabs session is connected and received the relay, but it did not enter speaking mode within 15 seconds. Check the agent's text-response behavior and your ElevenLabs concurrency limit.",
-            );
-          }
-        }, 15_000);
-      } catch (error) {
-        console.error("Unable to send relay to direct secondary session", error);
-        onStatus("error");
-        onError("The AI dialogue could not send the next turn to the second historical figure.");
-      }
+    // Never drop a relay simply because the hidden session is still connecting.
+    // Keep only the newest command; dialogue itself is strictly sequential.
+    pendingCommandRef.current = command;
+    if (!readyRef.current) {
+      onStatus("relay-queued");
+      return;
     }
 
-    void send();
-  }, [command, onError, onStatus]);
+    void dispatchPendingCommand();
+    // dispatchPendingCommand intentionally reads the latest refs rather than state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [command]);
 
   return null;
 }
