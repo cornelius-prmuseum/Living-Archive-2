@@ -625,4 +625,199 @@ footer p { margin: 0; color: var(--muted); font-family: Arial, Helvetica, sans-s
     width: 100%;
   }
 }
-\n\n/* v4.4: always-visible live transcript */\n.live-transcript-wrap {\n  max-width: 640px;\n  margin: 4px auto 18px;\n  text-align: left;\n}\n\n.live-transcript-heading {\n  display: flex;\n  align-items: baseline;\n  justify-content: space-between;\n  gap: 12px;\n  margin-bottom: 7px;\n  font-family: Arial, Helvetica, sans-serif;\n}\n\n.live-transcript-heading > span {\n  text-transform: uppercase;\n  letter-spacing: .1em;\n  color: var(--blue);\n  font-size: 9px;\n  font-weight: 700;\n}\n\n.live-transcript-heading small {\n  color: var(--muted);\n  font-size: 10px;\n}\n\n.transcript.live-transcript {\n  margin-top: 0;\n  height: 310px;\n  max-height: 310px;\n  overflow-y: auto;\n  scroll-behavior: smooth;\n  padding: 16px 17px 18px;\n  background: rgba(244,239,228,.5);\n}\n\n.live-transcript .transcript-line p {\n  font-size: 15px;\n  line-height: 1.52;\n  overflow-wrap: break-word;\n  word-break: normal;\n}\n\n.live-transcript .transcript-line.live-line p {\n  color: var(--ink);\n}\n\n.live-cursor {\n  display: inline !important;\n  margin-left: 2px !important;\n  color: var(--blue) !important;\n  font-size: .9em !important;\n  letter-spacing: 0 !important;\n  animation: transcript-cursor .8s step-end infinite;\n}\n\n@keyframes transcript-cursor {\n  50% { opacity: 0; }\n}\n\n.transcript-placeholder {\n  margin: 0;\n  color: var(--muted);\n  font-family: Arial, Helvetica, sans-serif;\n  font-size: 12px;\n  line-height: 1.5;\n}\n\n.finished-transcript-wrap {\n  margin: 28px auto 0;\n  max-width: 640px;\n}\n\n.finished-transcript {\n  text-align: left;\n}\n\n/* v4.4: optional backend-gated AI-to-AI dialogue */\n.ai-dialogue-panel {\n  max-width: 640px;\n  margin: 18px auto 22px;\n  padding: 14px 15px;\n  border: 1px solid var(--line);\n  background: rgba(31,95,139,.035);\n  text-align: left;\n  font-family: Arial, Helvetica, sans-serif;\n}\n\n.ai-dialogue-panel.active {\n  border-color: rgba(31,95,139,.34);\n  background: rgba(31,95,139,.065);\n}\n\n.ai-dialogue-heading {\n  display: flex;\n  justify-content: space-between;\n  gap: 12px;\n  align-items: flex-start;\n}\n\n.ai-dialogue-heading > div {\n  display: flex;\n  flex-direction: column;\n  gap: 2px;\n}\n\n.ai-dialogue-heading span {\n  text-transform: uppercase;\n  letter-spacing: .1em;\n  color: var(--blue);\n  font-size: 8px;\n  font-weight: 700;\n}\n\n.ai-dialogue-heading strong {\n  font-size: 14px;\n}\n\n.ai-dialogue-heading small {\n  color: var(--muted);\n  font-size: 10px;\n}\n\n.ai-dialogue-panel > p,\n.ai-dialogue-running p {\n  color: var(--muted);\n  font-size: 12px;\n  line-height: 1.45;\n}\n\n.ai-dialogue-fields {\n  display: grid;\n  grid-template-columns: 180px minmax(0, 1fr) auto;\n  gap: 8px;\n  align-items: end;\n}\n\n.ai-dialogue-fields label {\n  display: flex;\n  flex-direction: column;\n  gap: 5px;\n}\n\n.ai-dialogue-fields label > span {\n  color: var(--muted);\n  text-transform: uppercase;\n  letter-spacing: .08em;\n  font-size: 8px;\n  font-weight: 700;\n}\n\n.ai-dialogue-fields select,\n.ai-dialogue-fields input {\n  width: 100%;\n  min-width: 0;\n  border: 1px solid var(--line);\n  background: var(--white);\n  color: var(--ink);\n  padding: 10px 11px;\n  border-radius: 2px;\n  font: inherit;\n  font-size: 12px;\n}\n\n.ai-dialogue-running {\n  display: flex;\n  align-items: center;\n  justify-content: space-between;\n  gap: 12px;\n  margin-top: 10px;\n}\n\n.ai-dialogue-running p {\n  margin: 0;\n}\n\n@media (max-width: 720px) {\n  .transcript.live-transcript {\n    height: 270px;\n    max-height: 270px;\n  }\n\n  .ai-dialogue-fields {\n    grid-template-columns: 1fr;\n  }\n\n  .ai-dialogue-running {\n    align-items: stretch;\n    flex-direction: column;\n  }\n}\n
+
+
+/* v4.4: always-visible live transcript */
+.live-transcript-wrap {
+  max-width: 640px;
+  margin: 4px auto 18px;
+  text-align: left;
+}
+
+.live-transcript-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 7px;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.live-transcript-heading > span {
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--blue);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.live-transcript-heading small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.transcript.live-transcript {
+  margin-top: 0;
+  height: 310px;
+  max-height: 310px;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  padding: 16px 17px 18px;
+  background: rgba(244,239,228,.5);
+}
+
+.live-transcript .transcript-line p {
+  font-size: 15px;
+  line-height: 1.52;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.live-transcript .transcript-line.live-line p {
+  color: var(--ink);
+}
+
+.live-cursor {
+  display: inline !important;
+  margin-left: 2px !important;
+  color: var(--blue) !important;
+  font-size: .9em !important;
+  letter-spacing: 0 !important;
+  animation: transcript-cursor .8s step-end infinite;
+}
+
+@keyframes transcript-cursor {
+  50% { opacity: 0; }
+}
+
+.transcript-placeholder {
+  margin: 0;
+  color: var(--muted);
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.finished-transcript-wrap {
+  margin: 28px auto 0;
+  max-width: 640px;
+}
+
+.finished-transcript {
+  text-align: left;
+}
+
+/* v4.4: optional backend-gated AI-to-AI dialogue */
+.ai-dialogue-panel {
+  max-width: 640px;
+  margin: 18px auto 22px;
+  padding: 14px 15px;
+  border: 1px solid var(--line);
+  background: rgba(31,95,139,.035);
+  text-align: left;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.ai-dialogue-panel.active {
+  border-color: rgba(31,95,139,.34);
+  background: rgba(31,95,139,.065);
+}
+
+.ai-dialogue-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.ai-dialogue-heading > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ai-dialogue-heading span {
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--blue);
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.ai-dialogue-heading strong {
+  font-size: 14px;
+}
+
+.ai-dialogue-heading small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.ai-dialogue-panel > p,
+.ai-dialogue-running p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ai-dialogue-fields {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.ai-dialogue-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ai-dialogue-fields label > span {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.ai-dialogue-fields select,
+.ai-dialogue-fields input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  background: var(--white);
+  color: var(--ink);
+  padding: 10px 11px;
+  border-radius: 2px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.ai-dialogue-running {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.ai-dialogue-running p {
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  .transcript.live-transcript {
+    height: 270px;
+    max-height: 270px;
+  }
+
+  .ai-dialogue-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-dialogue-running {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
