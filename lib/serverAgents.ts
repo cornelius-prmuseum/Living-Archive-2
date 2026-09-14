@@ -39,3 +39,14 @@ export function getAgentSlugById(agentId: string): AgentSlug | null {
 
   return null;
 }
+
+export function getAiDialogueEnabled(): boolean {
+  const value = process.env.PRMUSEUM_AI_DIALOGUE_ENABLED?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+export function getAiDialogueMaxTurns(): number {
+  const raw = Number(process.env.PRMUSEUM_AI_DIALOGUE_MAX_TURNS ?? 6);
+  if (!Number.isFinite(raw)) return 6;
+  return Math.min(12, Math.max(2, Math.floor(raw)));
+}

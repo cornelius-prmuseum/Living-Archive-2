@@ -16,11 +16,6 @@ type TranscriptEntry = {
   speakerSlug?: AgentSlug;
 };
 
-type SubtitleLine = {
-  text: string;
-  speakerSlug: AgentSlug;
-};
-
 type ScreenState = "ready" | "active" | "wrapping" | "finished" | "error";
 
 type AudioAlignment = {
@@ -57,25 +52,8 @@ const CLOSE_PROMPT =
   "[INTERNAL SESSION CONTROL — not spoken by the visitor] The museum conversation is ending now. Give one brief final thought, thank the visitor for speaking with you, and say goodbye. Do not ask a new question. Keep this final response concise.";
 
 const SWITCH_PROMPT_PREFIX = "[MUSEUM UI AGENT SWITCH — not spoken by the visitor]";
+const DIALOGUE_PROMPT_PREFIX = "[PRMUSEUM AI DIALOGUE CONTROL — not spoken by the visitor]";
 
-
-function isSubtitleSentenceComplete(text: string) {
-  const trimmed = text.trimEnd();
-  if (!/[.!?][\"'’”)]*$/.test(trimmed)) return false;
-
-  // Avoid treating common abbreviations/initials as sentence endings while the
-  // words are being revealed (for example, “Mr. Lee” or “U.S. policy”).
-  const withoutClosers = trimmed.replace(/[\"'’”)]*$/, "");
-  const lastToken = withoutClosers.split(/\s+/).at(-1)?.toLowerCase() ?? "";
-  const abbreviations = new Set([
-    "mr.", "mrs.", "ms.", "dr.", "prof.", "sr.", "jr.", "st.", "vs.",
-    "etc.", "e.g.", "i.e.", "u.s.", "u.k.",
-  ]);
-  if (abbreviations.has(lastToken)) return false;
-  if (/^(?:[a-z]\.){1,4}$/i.test(lastToken)) return false;
-
-  return true;
-}
 
 function formatClock(seconds: number) {
   const safe = Math.max(0, seconds);
@@ -103,7 +81,12 @@ function normalizeMessage(event: unknown, activeSpeaker: AgentSlug): TranscriptE
     | string
     | undefined;
 
-  if (!text || text === CLOSE_PROMPT || text.startsWith(SWITCH_PROMPT_PREFIX)) return null;
+  if (
+    !text ||
+    text === CLOSE_PROMPT ||
+    text.startsWith(SWITCH_PROMPT_PREFIX) ||
+    text.startsWith(DIALOGUE_PROMPT_PREFIX)
+  ) return null;
 
   const source = String(e.source ?? e.role ?? e.type ?? "").toLowerCase();
   const isUser = Boolean(nestedUser) || source.includes("user") || source.includes("visitor");
@@ -137,10 +120,14 @@ export function AgentExperience({
   agentParam,
   returnUrl,
   enabledAgentSlugs,
+  aiDialogueEnabled,
+  aiDialogueMaxTurns,
 }: {
   agentParam: string | null;
   returnUrl: string | null;
   enabledAgentSlugs: AgentSlug[];
+  aiDialogueEnabled: boolean;
+  aiDialogueMaxTurns: number;
 }) {
   const enabledAgents = useMemo(() => enabledAgentSlugs.filter((slug) => Boolean(AGENTS[slug])), [enabledAgentSlugs]);
   const initialAgent = useMemo(() => getPublicAgent(agentParam, enabledAgents), [agentParam, enabledAgents]);
@@ -162,13 +149,20 @@ export function AgentExperience({
   const [screen, setScreen] = useState<ScreenState>(noAgentsAvailable ? "error" : "ready");
   const [remaining, setRemaining] = useState(sessionSeconds);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
-  const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState(
     noAgentsAvailable ? "No historical voice agents are currently enabled on the server." : "",
   );
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [textQuestion, setTextQuestion] = useState("");
-  const [subtitle, setSubtitle] = useState<SubtitleLine | null>(null);
+  const [liveAgentLine, setLiveAgentLine] = useState<TranscriptEntry | null>(null);
+  const [dialoguePartnerSlug, setDialoguePartnerSlug] = useState<AgentSlug | null>(
+    enabledAgents.find((slug) => slug !== initialAgent.slug) ?? null,
+  );
+  const [dialogueTopic, setDialogueTopic] = useState("");
+  const [dialogueActive, setDialogueActive] = useState(false);
+  const [dialoguePair, setDialoguePair] = useState<[AgentSlug, AgentSlug] | null>(null);
+  const [dialogueTurnsCompleted, setDialogueTurnsCompleted] = useState(0);
+  const [dialogueAwaitingResponse, setDialogueAwaitingResponse] = useState(false);
 
   const warningSentRef = useRef(false);
   const closePromptSentRef = useRef(false);
@@ -176,35 +170,49 @@ export function AgentExperience({
   const endRequestedRef = useRef(false);
   const closePromptSentAtRef = useRef<number | null>(null);
   const wasSpeakingRef = useRef(false);
-  const subtitleTimersRef = useRef<number[]>([]);
-  const subtitleBufferRef = useRef("");
-  // Only one sentence is shown at a time. Once a sentence reaches terminal
-  // punctuation, keep it visible until the first word of the next sentence is
-  // actually spoken, then clear the old sentence and begin the new one.
-  const subtitleSentenceCompleteRef = useRef(false);
-  const subtitleTurnActiveRef = useRef(false);
+  const alignmentTimersRef = useRef<number[]>([]);
+  const liveAgentBufferRef = useRef("");
+  const alignmentTurnActiveRef = useRef(false);
   const alignmentSeenInTurnRef = useRef(false);
-  // ElevenLabs emits audio alignment in multiple packets. The character timing
-  // inside each packet is local to that packet, so we keep a cumulative speech
-  // cursor to prevent separate packets from being revealed on top of each other.
-  const subtitlePacketCursorMsRef = useRef(0);
-  const subtitleTurnStartedAtRef = useRef<number | null>(null);
+  // ElevenLabs emits audio alignment in multiple packets whose timestamps are
+  // local to each packet. Keep a cumulative cursor so the live transcript grows
+  // in the same order the audio is played.
+  const alignmentPacketCursorMsRef = useRef(0);
+  const alignmentTurnStartedAtRef = useRef<number | null>(null);
+  const pendingAgentFinalRef = useRef<TranscriptEntry | null>(null);
+  const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
 
-  const clearSubtitleTimers = useCallback(() => {
-    subtitleTimersRef.current.forEach((timer) => window.clearTimeout(timer));
-    subtitleTimersRef.current = [];
+  const dialogueActiveRef = useRef(false);
+  const dialoguePairRef = useRef<[AgentSlug, AgentSlug] | null>(null);
+  const dialogueTurnsRef = useRef(0);
+  const dialogueTransferPendingRef = useRef(false);
+  const dialogueWasMutedRef = useRef(false);
+  const dialogueResponseFallbackTimerRef = useRef<number | null>(null);
+  const suppressAgentTurnRef = useRef(false);
+  const isSpeakingRef = useRef(false);
+
+  const clearAlignmentTimers = useCallback(() => {
+    alignmentTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    alignmentTimersRef.current = [];
   }, []);
 
-  const resetSubtitleStream = useCallback((clearVisible = true) => {
-    clearSubtitleTimers();
-    subtitleBufferRef.current = "";
-    subtitleSentenceCompleteRef.current = false;
-    subtitleTurnActiveRef.current = false;
+  const clearDialogueFallbackTimer = useCallback(() => {
+    if (dialogueResponseFallbackTimerRef.current !== null) {
+      window.clearTimeout(dialogueResponseFallbackTimerRef.current);
+      dialogueResponseFallbackTimerRef.current = null;
+    }
+  }, []);
+
+  const resetAlignmentStream = useCallback((clearVisible = true) => {
+    clearAlignmentTimers();
+    liveAgentBufferRef.current = "";
+    alignmentTurnActiveRef.current = false;
     alignmentSeenInTurnRef.current = false;
-    subtitlePacketCursorMsRef.current = 0;
-    subtitleTurnStartedAtRef.current = null;
-    if (clearVisible) setSubtitle(null);
-  }, [clearSubtitleTimers]);
+    alignmentPacketCursorMsRef.current = 0;
+    alignmentTurnStartedAtRef.current = null;
+    pendingAgentFinalRef.current = null;
+    if (clearVisible) setLiveAgentLine(null);
+  }, [clearAlignmentTimers]);
 
   const updateAgentUrl = useCallback((slug: AgentSlug) => {
     if (typeof window === "undefined") return;
@@ -218,9 +226,9 @@ export function AgentExperience({
     activeAgentSlugRef.current = slug;
     setActiveAgentSlug(slug);
     setPendingTransferSlug(null);
-    resetSubtitleStream(true);
+    resetAlignmentStream(true);
     updateAgentUrl(slug);
-  }, [enabledAgents, resetSubtitleStream, updateAgentUrl]);
+  }, [enabledAgents, resetAlignmentStream, updateAgentUrl]);
 
   const confirmActiveAgentId = useCallback(async (agentId: string) => {
     const clean = agentId.trim();
@@ -292,21 +300,21 @@ export function AgentExperience({
     }
   }, [enabledAgents]);
 
-  const scheduleAlignedSubtitle = useCallback((payload: unknown) => {
+  const scheduleAlignedTranscript = useCallback((payload: unknown) => {
     const alignment = normalizeAudioAlignment(payload);
-    if (!alignment || alignment.chars.length === 0) return;
+    if (!alignment || alignment.chars.length === 0 || suppressAgentTurnRef.current) return;
 
     const now = performance.now();
 
-    if (!subtitleTurnActiveRef.current) {
-      clearSubtitleTimers();
-      subtitleBufferRef.current = "";
-      subtitleSentenceCompleteRef.current = false;
-      subtitleTurnActiveRef.current = true;
+    if (!alignmentTurnActiveRef.current) {
+      clearAlignmentTimers();
+      liveAgentBufferRef.current = "";
+      alignmentTurnActiveRef.current = true;
       alignmentSeenInTurnRef.current = true;
-      subtitlePacketCursorMsRef.current = 0;
-      subtitleTurnStartedAtRef.current = now;
-      setSubtitle(null);
+      alignmentPacketCursorMsRef.current = 0;
+      alignmentTurnStartedAtRef.current = now;
+      pendingAgentFinalRef.current = null;
+      setLiveAgentLine(null);
     } else {
       alignmentSeenInTurnRef.current = true;
     }
@@ -315,15 +323,11 @@ export function AgentExperience({
     const starts = alignment.starts;
     const durations = alignment.durations;
     const speakerSlug = activeAgentSlugRef.current;
-    const turnStartedAt = subtitleTurnStartedAtRef.current ?? now;
+    const turnStartedAt = alignmentTurnStartedAtRef.current ?? now;
     const elapsedMs = Math.max(0, now - turnStartedAt);
 
-    // IMPORTANT: char_start_times_ms is local to each alignment packet, not one
-    // global clock for the entire answer. Queue this packet after the prior one.
-    // If a packet arrives late, start it immediately rather than trying to catch up
-    // by interleaving its words with text that is already on screen.
     const firstStartMs = Number(starts[0] ?? 0);
-    const packetBaseMs = Math.max(subtitlePacketCursorMsRef.current, elapsedMs);
+    const packetBaseMs = Math.max(alignmentPacketCursorMsRef.current, elapsedMs);
 
     let packetEndMs = 0;
     for (let i = 0; i < chars.length; i += 1) {
@@ -332,15 +336,14 @@ export function AgentExperience({
       packetEndMs = Math.max(packetEndMs, localStart + duration);
     }
 
-    // Some payloads omit durations. Give the final character a small tail so the
-    // next packet cannot begin at exactly the same instant as the last word.
     if (packetEndMs <= 0) {
       packetEndMs = Math.max(0, Number(starts.at(-1) ?? firstStartMs) - firstStartMs) + 40;
     }
-    subtitlePacketCursorMsRef.current = packetBaseMs + packetEndMs;
+    alignmentPacketCursorMsRef.current = packetBaseMs + packetEndMs;
 
-    // Reveal word/space runs using the timing inside this packet, offset by the
-    // cumulative packet cursor established above.
+    // Reveal the current agent turn directly inside the full transcript. This
+    // uses audio timing rather than the completed LLM response, so words appear
+    // when they are actually spoken.
     let index = 0;
     while (index < chars.length) {
       const whitespace = /\s/.test(chars[index]);
@@ -353,29 +356,14 @@ export function AgentExperience({
       const delay = Math.max(0, targetMs - elapsedMs);
 
       const timer = window.setTimeout(() => {
-        const hasSpokenContent = /\S/.test(chunk);
-
-        // Keep the completed sentence on screen during the natural pause after
-        // punctuation. Only replace it when the next spoken word arrives.
-        if (subtitleSentenceCompleteRef.current && hasSpokenContent) {
-          subtitleBufferRef.current = "";
-          subtitleSentenceCompleteRef.current = false;
-        }
-
-        subtitleBufferRef.current += chunk;
-        const visibleSentence = subtitleBufferRef.current.trimStart();
-        setSubtitle({ text: visibleSentence, speakerSlug });
-
-        // Treat normal sentence-ending punctuation (including a trailing quote
-        // or parenthesis) as the handoff point to the next subtitle sentence.
-        if (isSubtitleSentenceComplete(subtitleBufferRef.current)) {
-          subtitleSentenceCompleteRef.current = true;
-        }
+        liveAgentBufferRef.current += chunk;
+        const visibleText = liveAgentBufferRef.current.trimStart();
+        setLiveAgentLine({ role: "agent", text: visibleText, speakerSlug });
       }, delay);
-      subtitleTimersRef.current.push(timer);
+      alignmentTimersRef.current.push(timer);
       index = end;
     }
-  }, [clearSubtitleTimers]);
+  }, [clearAlignmentTimers]);
 
   const conversation = useConversation({
     clientTools: {
@@ -404,7 +392,13 @@ export function AgentExperience({
     onDisconnect: () => {
       transferTargetByCallRef.current.clear();
       setPendingTransferSlug(null);
-      resetSubtitleStream(false);
+      resetAlignmentStream(false);
+      dialogueActiveRef.current = false;
+      dialoguePairRef.current = null;
+      dialogueTransferPendingRef.current = false;
+      setDialogueActive(false);
+      setDialoguePair(null);
+      setDialogueAwaitingResponse(false);
       setScreen((current) => (current === "error" ? current : "finished"));
     },
     onAgentToolRequest: (request: any) => {
@@ -434,6 +428,16 @@ export function AgentExperience({
 
       if (response?.is_error) {
         setPendingTransferSlug(null);
+        dialogueTransferPendingRef.current = false;
+        suppressAgentTurnRef.current = false;
+        if (dialogueActiveRef.current) {
+          dialogueActiveRef.current = false;
+          dialoguePairRef.current = null;
+          setDialogueActive(false);
+          setDialoguePair(null);
+          setDialogueAwaitingResponse(false);
+          setErrorMessage("The AI dialogue stopped because an agent transfer failed.");
+        }
         return;
       }
 
@@ -442,35 +446,52 @@ export function AgentExperience({
         // This is the authoritative UI switch: ElevenLabs has reported that its
         // transfer_to_agent system tool completed successfully.
         confirmActiveAgent(target);
+        suppressAgentTurnRef.current = false;
+        if (dialogueActiveRef.current) {
+          dialogueTransferPendingRef.current = false;
+          setDialogueAwaitingResponse(true);
+        }
       } else {
         setPendingTransferSlug(null);
         console.warn("ElevenLabs transferred agents, but the destination could not be mapped to a PRMuseum profile.");
       }
     },
     onAudioAlignment: (alignment: unknown) => {
-      scheduleAlignedSubtitle(alignment);
+      scheduleAlignedTranscript(alignment);
     },
     onMessage: (message) => {
       const normalized = normalizeMessage(message, activeAgentSlugRef.current);
       if (!normalized) return;
 
-      setTranscript((previous) => mergeTranscript(previous, normalized));
-
-      // Fallback for an agent where audio-alignment client events have not yet
-      // been enabled. When alignment is available, do not jump ahead to the
-      // completed response text.
-      if (
-        normalized.role === "agent" &&
-        normalized.speakerSlug &&
-        !alignmentSeenInTurnRef.current
-      ) {
-        setSubtitle({ text: normalized.text, speakerSlug: normalized.speakerSlug });
+      if (normalized.role === "visitor") {
+        setTranscript((previous) => mergeTranscript(previous, normalized));
+        return;
       }
+
+      if (suppressAgentTurnRef.current) return;
+
+      // When audio alignment is active, hold the completed agent response until
+      // speech ends. The visible live line is already growing word-by-word from
+      // the audio timing, so inserting the final text now would jump ahead.
+      if (alignmentSeenInTurnRef.current || alignmentTurnActiveRef.current) {
+        pendingAgentFinalRef.current = normalized;
+        return;
+      }
+
+      // Fallback when the agent does not emit alignment events.
+      setTranscript((previous) => mergeTranscript(previous, normalized));
     },
     onError: (error) => {
       console.error(error);
       setPendingTransferSlug(null);
-      resetSubtitleStream(false);
+      dialogueActiveRef.current = false;
+      dialoguePairRef.current = null;
+      dialogueTransferPendingRef.current = false;
+      suppressAgentTurnRef.current = false;
+      setDialogueActive(false);
+      setDialoguePair(null);
+      setDialogueAwaitingResponse(false);
+      resetAlignmentStream(false);
       setErrorMessage(typeof error === "string" ? error : "The voice connection encountered an error.");
       setScreen("error");
     },
@@ -483,8 +504,8 @@ export function AgentExperience({
     endRequestedRef.current = false;
     closePromptSentAtRef.current = null;
     wasSpeakingRef.current = false;
-    resetSubtitleStream(true);
-  }, [resetSubtitleStream]);
+    resetAlignmentStream(true);
+  }, [resetAlignmentStream]);
 
   const endNow = useCallback(async () => {
     if (endRequestedRef.current) return;
@@ -505,6 +526,14 @@ export function AgentExperience({
 
     closePromptSentRef.current = true;
     closePromptSentAtRef.current = Date.now();
+    dialogueActiveRef.current = false;
+    dialoguePairRef.current = null;
+    dialogueTransferPendingRef.current = false;
+    suppressAgentTurnRef.current = false;
+    setDialogueActive(false);
+    setDialoguePair(null);
+    setDialogueAwaitingResponse(false);
+    setPendingTransferSlug(null);
     setScreen("wrapping");
 
     try {
@@ -525,6 +554,15 @@ export function AgentExperience({
     setConversationId(null);
     transferTargetByCallRef.current.clear();
     setPendingTransferSlug(null);
+    dialogueActiveRef.current = false;
+    dialoguePairRef.current = null;
+    dialogueTransferPendingRef.current = false;
+    suppressAgentTurnRef.current = false;
+    dialogueTurnsRef.current = 0;
+    setDialogueActive(false);
+    setDialoguePair(null);
+    setDialogueTurnsCompleted(0);
+    setDialogueAwaitingResponse(false);
     resetSessionRefs();
 
     try {
@@ -585,7 +623,13 @@ export function AgentExperience({
   }, [sendTextQuestion, textQuestion]);
 
   const selectAgent = useCallback((slug: AgentSlug) => {
-    if (!enabledAgents.includes(slug) || slug === activeAgentSlug || pendingTransferSlug || screen === "wrapping") return;
+    if (
+      !enabledAgents.includes(slug) ||
+      slug === activeAgentSlug ||
+      pendingTransferSlug ||
+      screen === "wrapping" ||
+      dialogueActive
+    ) return;
 
     if (conversation.status !== "connected") {
       confirmActiveAgent(slug);
@@ -593,7 +637,7 @@ export function AgentExperience({
         setScreen("ready");
         setRemaining(sessionSeconds);
         setTranscript([]);
-        setSubtitle(null);
+        setLiveAgentLine(null);
         setErrorMessage("");
         resetSessionRefs();
       }
@@ -621,9 +665,75 @@ export function AgentExperience({
     conversation,
     enabledAgents,
     pendingTransferSlug,
+    dialogueActive,
     resetSessionRefs,
     screen,
     sessionSeconds,
+  ]);
+
+  const stopAiDialogue = useCallback(() => {
+    dialogueActiveRef.current = false;
+    dialoguePairRef.current = null;
+    dialogueTransferPendingRef.current = false;
+    suppressAgentTurnRef.current = false;
+    dialogueTurnsRef.current = 0;
+    clearDialogueFallbackTimer();
+    setDialogueActive(false);
+    setDialoguePair(null);
+    setDialogueTurnsCompleted(0);
+    setDialogueAwaitingResponse(false);
+    setPendingTransferSlug(null);
+
+    if (conversation.status === "connected") {
+      conversation.setMuted(dialogueWasMutedRef.current);
+    }
+  }, [clearDialogueFallbackTimer, conversation]);
+
+  const startAiDialogue = useCallback(() => {
+    if (
+      !aiDialogueEnabled ||
+      conversation.status !== "connected" ||
+      dialogueActiveRef.current ||
+      screen === "wrapping"
+    ) return;
+
+    const first = activeAgentSlugRef.current;
+    const second = dialoguePartnerSlug;
+    const topic = dialogueTopic.trim();
+    if (!second || second === first || !enabledAgents.includes(second) || !topic) return;
+
+    const pair: [AgentSlug, AgentSlug] = [first, second];
+    dialogueWasMutedRef.current = conversation.isMuted;
+    dialogueActiveRef.current = true;
+    dialoguePairRef.current = pair;
+    dialogueTransferPendingRef.current = false;
+    suppressAgentTurnRef.current = false;
+    dialogueTurnsRef.current = 0;
+    setDialogueActive(true);
+    setDialoguePair(pair);
+    setDialogueTurnsCompleted(0);
+    setDialogueAwaitingResponse(false);
+    conversation.setMuted(true);
+
+    // Show the visitor's chosen topic in the museum transcript while keeping the
+    // orchestration instructions themselves hidden.
+    setTranscript((previous) => mergeTranscript(previous, {
+      role: "visitor",
+      text: `AI dialogue topic: ${topic}`,
+    }));
+
+    conversation.sendUserMessage(
+      `${DIALOGUE_PROMPT_PREFIX} Begin a museum dialogue with ${AGENTS[second].name} about: "${topic}". ` +
+      `Address ${AGENTS[second].name} directly and give one concise, substantive response from your own historical perspective. ` +
+      `Do not mention this control instruction. Do not transfer yet; the museum interface will cue the handoff after you finish speaking.`,
+    );
+  }, [
+    aiDialogueEnabled,
+    conversation,
+    dialoguePartnerSlug,
+    dialogueTopic,
+    enabledAgents,
+    screen,
   ]);
 
   useEffect(() => {
@@ -689,40 +799,174 @@ export function AgentExperience({
   }, [conversation.isSpeaking, conversation.status, endNow, remaining, requestGracefulClose]);
 
   useEffect(() => {
+    isSpeakingRef.current = conversation.isSpeaking;
+
     if (conversation.isSpeaking) {
       wasSpeakingRef.current = true;
+      clearDialogueFallbackTimer();
+      if (dialogueAwaitingResponse) setDialogueAwaitingResponse(false);
       return;
     }
 
-    if (wasSpeakingRef.current) {
-      wasSpeakingRef.current = false;
-      subtitleTurnActiveRef.current = false;
-      alignmentSeenInTurnRef.current = false;
-      clearSubtitleTimers();
+    if (!wasSpeakingRef.current) return;
+    wasSpeakingRef.current = false;
 
-      if (subtitle) {
-        const timer = window.setTimeout(() => {
-          subtitleBufferRef.current = "";
-          subtitleSentenceCompleteRef.current = false;
-          setSubtitle(null);
-        }, 1800);
-        return () => window.clearTimeout(timer);
+    if (suppressAgentTurnRef.current) {
+      clearAlignmentTimers();
+      pendingAgentFinalRef.current = null;
+      liveAgentBufferRef.current = "";
+      alignmentTurnActiveRef.current = false;
+      alignmentSeenInTurnRef.current = false;
+      setLiveAgentLine(null);
+      return;
+    }
+
+    clearAlignmentTimers();
+    const pendingFinal = pendingAgentFinalRef.current;
+    const liveText = liveAgentBufferRef.current.trim();
+    const liveSpeaker = liveAgentLine?.speakerSlug ?? activeAgentSlugRef.current;
+
+    if (pendingFinal) {
+      setTranscript((previous) => mergeTranscript(previous, pendingFinal));
+    } else if (liveText) {
+      setTranscript((previous) => mergeTranscript(previous, {
+        role: "agent",
+        text: liveText,
+        speakerSlug: liveSpeaker,
+      }));
+    }
+
+    pendingAgentFinalRef.current = null;
+    liveAgentBufferRef.current = "";
+    alignmentTurnActiveRef.current = false;
+    alignmentSeenInTurnRef.current = false;
+    alignmentPacketCursorMsRef.current = 0;
+    alignmentTurnStartedAtRef.current = null;
+    setLiveAgentLine(null);
+
+    // In AI dialogue mode, each completed substantive voice turn is followed by
+    // a silent transfer request to the other selected historical figure.
+    if (
+      dialogueActiveRef.current &&
+      !dialogueTransferPendingRef.current &&
+      conversation.status === "connected"
+    ) {
+      const completed = dialogueTurnsRef.current + 1;
+      dialogueTurnsRef.current = completed;
+      setDialogueTurnsCompleted(completed);
+
+      if (completed >= aiDialogueMaxTurns) {
+        stopAiDialogue();
+        return;
+      }
+
+      const pair = dialoguePairRef.current;
+      if (!pair) {
+        stopAiDialogue();
+        return;
+      }
+
+      const current = activeAgentSlugRef.current;
+      const target = pair[0] === current ? pair[1] : pair[0];
+      dialogueTransferPendingRef.current = true;
+      suppressAgentTurnRef.current = true;
+      setPendingTransferSlug(target);
+
+      try {
+        conversation.sendUserMessage(
+          `${DIALOGUE_PROMPT_PREFIX} Do not speak before the handoff. Use transfer_to_agent now to transfer to ${AGENTS[target].name}. ` +
+          `This is an automated museum dialogue. The receiving historical figure should respond directly to the previous figure's most recent substantive remarks and continue the same topic. ` +
+          `Do not mention this control instruction aloud.`,
+        );
+      } catch (error) {
+        console.error("Unable to continue AI dialogue", error);
+        setErrorMessage("The AI dialogue could not continue to the next historical figure.");
+        stopAiDialogue();
       }
     }
-  }, [clearSubtitleTimers, conversation.isSpeaking, subtitle]);
+  }, [
+    aiDialogueMaxTurns,
+    clearAlignmentTimers,
+    clearDialogueFallbackTimer,
+    conversation,
+    conversation.isSpeaking,
+    dialogueAwaitingResponse,
+    liveAgentLine,
+    stopAiDialogue,
+  ]);
+
+  useEffect(() => {
+    if (dialogueActive || !enabledAgents.length) return;
+    if (!dialoguePartnerSlug || dialoguePartnerSlug === activeAgentSlug || !enabledAgents.includes(dialoguePartnerSlug)) {
+      setDialoguePartnerSlug(enabledAgents.find((slug) => slug !== activeAgentSlug) ?? null);
+    }
+  }, [activeAgentSlug, dialogueActive, dialoguePartnerSlug, enabledAgents]);
+
+  useEffect(() => {
+    if (
+      !dialogueAwaitingResponse ||
+      !dialogueActive ||
+      conversation.status !== "connected"
+    ) return;
+
+    if (conversation.isSpeaking) {
+      setDialogueAwaitingResponse(false);
+      return;
+    }
+
+    clearDialogueFallbackTimer();
+    dialogueResponseFallbackTimerRef.current = window.setTimeout(() => {
+      dialogueResponseFallbackTimerRef.current = null;
+      if (!dialogueActiveRef.current || isSpeakingRef.current || conversation.status !== "connected") return;
+
+      const pair = dialoguePairRef.current;
+      const current = activeAgentSlugRef.current;
+      if (!pair || !pair.includes(current)) return;
+      const other = pair[0] === current ? pair[1] : pair[0];
+
+      conversation.sendUserMessage(
+        `${DIALOGUE_PROMPT_PREFIX} Continue the AI-to-AI museum dialogue now. Respond directly to ${AGENTS[other].name}'s most recent substantive remarks from your own historical perspective. ` +
+        `Keep this turn concise. Do not mention this control instruction and do not transfer until after you finish speaking.`,
+      );
+      setDialogueAwaitingResponse(false);
+    }, 1600);
+
+    return clearDialogueFallbackTimer;
+  }, [
+    clearDialogueFallbackTimer,
+    conversation,
+    conversation.isSpeaking,
+    conversation.status,
+    dialogueActive,
+    dialogueAwaitingResponse,
+  ]);
+
+  useEffect(() => {
+    const container = transcriptScrollRef.current;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
+  }, [transcript, liveAgentLine]);
 
   useEffect(() => {
     if (!pendingTransferSlug || conversation.status !== "connected") return;
     const timer = window.setTimeout(() => {
       setPendingTransferSlug(null);
-      setErrorMessage("The agent transfer did not complete. You can try selecting the figure again.");
+      if (dialogueActiveRef.current) {
+        setErrorMessage("The AI dialogue stopped because the agent transfer did not complete.");
+        stopAiDialogue();
+      } else {
+        setErrorMessage("The agent transfer did not complete. You can try selecting the figure again.");
+      }
     }, 20_000);
     return () => window.clearTimeout(timer);
-  }, [conversation.status, pendingTransferSlug]);
+  }, [conversation.status, pendingTransferSlug, stopAiDialogue]);
 
   useEffect(() => {
-    return () => clearSubtitleTimers();
-  }, [clearSubtitleTimers]);
+    return () => {
+      clearAlignmentTimers();
+      clearDialogueFallbackTimer();
+    };
+  }, [clearAlignmentTimers, clearDialogueFallbackTimer]);
 
   const statusLabel =
     screen === "wrapping"
@@ -747,7 +991,11 @@ export function AgentExperience({
     }
   }, [returnUrl]);
 
-  const textDisabled = screen === "wrapping" || conversation.status === "connecting" || noAgentsAvailable;
+  const textDisabled =
+    screen === "wrapping" ||
+    conversation.status === "connecting" ||
+    noAgentsAvailable ||
+    dialogueActive;
 
   return (
     <main className="experience-shell">
@@ -815,15 +1063,39 @@ export function AgentExperience({
                 <span /><span /><span /><span /><span />
               </div>
 
-              <div className={`live-subtitles ${subtitle ? "visible" : ""}`} aria-live="polite" aria-atomic="true">
-                {subtitle ? (
-                  <>
-                    <span>{AGENTS[subtitle.speakerSlug].name}</span>
-                    <p>{subtitle.text}</p>
-                  </>
-                ) : (
-                  <p className="subtitle-placeholder">Subtitles will appear here while the historical figure speaks.</p>
-                )}
+              <div className="live-transcript-wrap">
+                <div className="live-transcript-heading">
+                  <span>Live transcript</span>
+                  {dialogueActive && dialoguePair && (
+                    <small>AI dialogue · {dialogueTurnsCompleted}/{aiDialogueMaxTurns} turns</small>
+                  )}
+                </div>
+                <div
+                  className="transcript live-transcript"
+                  role="log"
+                  aria-live="polite"
+                  aria-relevant="additions text"
+                  ref={transcriptScrollRef}
+                >
+                  {transcript.length === 0 && !liveAgentLine && (
+                    <p className="transcript-placeholder">The conversation transcript will appear here.</p>
+                  )}
+                  {transcript.map((entry, index) => {
+                    const speaker = entry.speakerSlug ? AGENTS[entry.speakerSlug].shortName : agent.shortName;
+                    return (
+                      <div className="transcript-line" key={`${entry.role}-${index}-${entry.text.slice(0, 20)}`}>
+                        <span>{entry.role === "visitor" ? "Visitor" : speaker}</span>
+                        <p>{entry.text}</p>
+                      </div>
+                    );
+                  })}
+                  {liveAgentLine && (
+                    <div className="transcript-line live-line">
+                      <span>{liveAgentLine.speakerSlug ? AGENTS[liveAgentLine.speakerSlug].shortName : agent.shortName}</span>
+                      <p>{liveAgentLine.text}<span className="live-cursor" aria-hidden="true">▌</span></p>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <p className="live-instruction">
@@ -852,11 +1124,69 @@ export function AgentExperience({
                 compact
               />
 
+              {aiDialogueEnabled && enabledAgents.length > 1 && (
+                <div className={`ai-dialogue-panel ${dialogueActive ? "active" : ""}`}>
+                  <div className="ai-dialogue-heading">
+                    <div>
+                      <span>Experimental</span>
+                      <strong>AI-to-AI dialogue</strong>
+                    </div>
+                    {dialogueActive && dialoguePair && (
+                      <small>{AGENTS[dialoguePair[0]].shortName} ↔ {AGENTS[dialoguePair[1]].shortName}</small>
+                    )}
+                  </div>
+
+                  {!dialogueActive ? (
+                    <>
+                      <p>Let two historical figures alternate responses on a topic. The microphone is muted while they speak with each other.</p>
+                      <div className="ai-dialogue-fields">
+                        <label>
+                          <span>Second figure</span>
+                          <select
+                            value={dialoguePartnerSlug ?? ""}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              if (isAgentSlug(value)) setDialoguePartnerSlug(value);
+                            }}
+                          >
+                            {enabledAgents.filter((slug) => slug !== activeAgentSlug).map((slug) => (
+                              <option value={slug} key={slug}>{AGENTS[slug].name}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="dialogue-topic-field">
+                          <span>Topic</span>
+                          <input
+                            value={dialogueTopic}
+                            onChange={(event) => setDialogueTopic(event.target.value)}
+                            placeholder="e.g. Should corporations shape public opinion?"
+                            maxLength={300}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="secondary-button dialogue-start-button"
+                          onClick={startAiDialogue}
+                          disabled={!dialoguePartnerSlug || !dialogueTopic.trim() || pendingTransferSlug !== null}
+                        >
+                          Start dialogue
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="ai-dialogue-running">
+                      <p>Turn {Math.min(dialogueTurnsCompleted + 1, aiDialogueMaxTurns)} of {aiDialogueMaxTurns}. You can stop the exchange at any time.</p>
+                      <button type="button" className="secondary-button" onClick={stopAiDialogue}>Stop AI dialogue</button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="control-row">
                 <button
                   className="secondary-button"
                   onClick={() => conversation.setMuted(!conversation.isMuted)}
-                  disabled={screen === "wrapping"}
+                  disabled={screen === "wrapping" || dialogueActive}
                 >
                   {conversation.isMuted ? <MicIcon /> : <MuteIcon />}
                   {conversation.isMuted ? "Unmute" : "Mute"}
@@ -866,26 +1196,6 @@ export function AgentExperience({
                 </button>
               </div>
 
-              {transcript.length > 0 && (
-                <div className="transcript-wrap">
-                  <button className="text-button" onClick={() => setTranscriptOpen((open) => !open)}>
-                    {transcriptOpen ? "Hide transcript" : "Show transcript"}
-                  </button>
-                  {transcriptOpen && (
-                    <div className="transcript" role="log">
-                      {transcript.map((entry, index) => {
-                        const speaker = entry.speakerSlug ? AGENTS[entry.speakerSlug].shortName : agent.shortName;
-                        return (
-                          <div className="transcript-line" key={`${entry.role}-${index}-${entry.text.slice(0, 20)}`}>
-                            <span>{entry.role === "visitor" ? "Visitor" : speaker}</span>
-                            <p>{entry.text}</p>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
           )}
 
@@ -898,7 +1208,8 @@ export function AgentExperience({
                   setScreen("ready");
                   setRemaining(sessionSeconds);
                   setTranscript([]);
-                  setSubtitle(null);
+                  setLiveAgentLine(null);
+                  stopAiDialogue();
                   resetSessionRefs();
                 }}>
                   Start Another Conversation
@@ -909,6 +1220,22 @@ export function AgentExperience({
                   </a>
                 )}
               </div>
+              {transcript.length > 0 && (
+                <div className="finished-transcript-wrap">
+                  <div className="live-transcript-heading"><span>Conversation transcript</span></div>
+                  <div className="transcript live-transcript finished-transcript" role="log">
+                    {transcript.map((entry, index) => {
+                      const speaker = entry.speakerSlug ? AGENTS[entry.speakerSlug].shortName : agent.shortName;
+                      return (
+                        <div className="transcript-line" key={`finished-${entry.role}-${index}-${entry.text.slice(0, 20)}`}>
+                          <span>{entry.role === "visitor" ? "Visitor" : speaker}</span>
+                          <p>{entry.text}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
               {conversationId && <p className="conversation-id">Session: {conversationId}</p>}
             </div>
           )}
@@ -946,7 +1273,10 @@ export function AgentExperience({
               const candidate = AGENTS[slug];
               const isActive = slug === activeAgentSlug;
               const isPending = slug === pendingTransferSlug;
-              const disabled = screen === "wrapping" || (!!pendingTransferSlug && !isPending);
+              const disabled =
+                screen === "wrapping" ||
+                dialogueActive ||
+                (!!pendingTransferSlug && !isPending);
 
               return (
                 <button

@@ -1,19 +1,27 @@
-# PRMuseum Historical Voice App — Multi-Agent v4
+# PRMuseum Historical Voice App — Multi-Agent v4.4
 
 A Next.js/Vercel frontend for PRMuseum historical voice agents powered by ElevenLabs.
 
-## Included in this version
+## What changed in v4.4
+
+- The separate subtitle box has been replaced by an **always-visible, scrollable live transcript**.
+- Visitor speech/text appears in the transcript normally.
+- Agent text grows **word-by-word from ElevenLabs audio-alignment timing**, so the transcript follows the words being spoken rather than jumping immediately to the completed LLM response.
+- The transcript automatically scrolls to the current line and remains available after the conversation ends.
+- Added an optional **AI-to-AI dialogue mode**. Two enabled historical figures can alternate voice responses in the same ElevenLabs conversation.
+- AI dialogue is controlled entirely from the backend with `PRMUSEUM_AI_DIALOGUE_ENABLED` and is OFF by default.
+- AI dialogue has a server-side maximum-turn safety limit (`PRMUSEUM_AI_DIALOGUE_MAX_TURNS`, default 6).
+
+Existing features remain:
 
 - Edward Bernays, Ivy Lee, Walter Lippmann, and Arthur W. Page
-- Right-side agent selector with portraits and active-agent state
-- Voice questions and typed questions in the same live conversation
-- Three clickable recommended questions for every historical figure
-- Speech-synchronized progressive subtitles using ElevenLabs audio alignment timing
-- Active-profile synchronization using ElevenLabs `system__current_agent_id` plus the `syncActiveAgent` client tool
-- Server-side enable/disable list for agents
-- 10-minute frontend session timer with graceful wrap-up
-- Server-side WebRTC conversation-token route
-- Transcript with the historical figure attached to each agent response
+- Right-side agent selector
+- Voice and typed questions
+- Three suggested questions per agent
+- Transfer-event profile synchronization
+- Server-side agent enable/disable list
+- 10-minute session timer
+- Server-side WebRTC token generation
 
 ## Environment variables
 
@@ -27,112 +35,107 @@ ELEVENLABS_AGENT_ARTHUR_PAGE=agent_...
 
 PRMUSEUM_ENABLED_AGENTS=bernays,ivy-lee,lippmann,arthur-page
 
+# Optional AI-to-AI feature. Keep false to hide/disable it completely.
+PRMUSEUM_AI_DIALOGUE_ENABLED=false
+PRMUSEUM_AI_DIALOGUE_MAX_TURNS=6
+
 NEXT_PUBLIC_DEFAULT_AGENT=bernays
 NEXT_PUBLIC_SESSION_SECONDS=600
 ```
 
-`PRMUSEUM_ENABLED_AGENTS` is the backend availability switch. To hide an agent, remove its slug and redeploy Vercel. The Agent ID can stay in Vercel.
+After changing Vercel environment variables, redeploy Production.
 
-Examples:
+## Full live transcript
+
+The live transcript uses ElevenLabs `onAudioAlignment` character timing. The current agent line is progressively filled as the audio is spoken. When that voice turn ends, the completed agent response is committed to the transcript and the next turn begins below it.
+
+For every agent that can start a call, enable the `audio` client event in ElevenLabs under **Advanced → Client events**.
+
+The transcript falls back to the completed agent response if audio alignment is unavailable.
+
+## AI-to-AI dialogue mode
+
+This is an **orchestrated alternating dialogue**, not two simultaneous audio streams.
+
+When enabled in Vercel, a visitor can:
+
+1. Begin a normal voice conversation with one historical figure.
+2. Choose a second enabled historical figure.
+3. Enter a discussion topic.
+4. Press **Start dialogue**.
+
+The app mutes the visitor microphone, asks the current figure to make the opening statement, then uses the existing ElevenLabs `transfer_to_agent` flow to alternate the same conversation between the two figures. ElevenLabs preserves the transcript/context across transfers, so the receiving figure can respond to the prior figure's remarks.
+
+Only one voice speaks at a time. This avoids audio feedback and makes the transcript/profile identity much easier to follow.
+
+The visitor can press **Stop AI dialogue** at any point; the app restores the microphone to its prior state and the normal visitor conversation can continue.
+
+### Backend switch
+
+To enable:
 
 ```env
-# All four
+PRMUSEUM_AI_DIALOGUE_ENABLED=true
+```
+
+To remove the feature from the UI:
+
+```env
+PRMUSEUM_AI_DIALOGUE_ENABLED=false
+```
+
+Optional turn limit:
+
+```env
+PRMUSEUM_AI_DIALOGUE_MAX_TURNS=6
+```
+
+The app clamps this value between 2 and 12 turns to prevent an accidental runaway autonomous conversation.
+
+### ElevenLabs configuration for AI dialogue
+
+No additional API-key scope is required beyond what the existing app already uses.
+
+The selected agents must already be able to transfer to one another through your normal `transfer_to_agent` configuration. **Do not rewrite otherwise-working transfer rules just for AI dialogue.** The app sends explicit internal transfer requests using the same pathway as the right-side agent selector.
+
+For the existing transfer-event profile synchronization, keep these client events enabled:
+
+```text
+agent_tool_request
+agent_tool_response
+```
+
+For the word-timed live transcript, also enable:
+
+```text
+audio
+```
+
+## Profile synchronization
+
+v4.4 retains v4.3's transfer-event profile sync. The portrait/name stays on the current figure until ElevenLabs reports a successful `transfer_to_agent` system-tool response, then the app switches to the receiving figure.
+
+The server reads the source agent's transfer configuration through `/api/resolve-transfer`, so the ElevenLabs API key should have Conversational AI / Agents **Read** and **Write**.
+
+## Agent availability
+
+Use:
+
+```env
 PRMUSEUM_ENABLED_AGENTS=bernays,ivy-lee,lippmann,arthur-page
-
-# Hide Lippmann
-PRMUSEUM_ENABLED_AGENTS=bernays,ivy-lee,arthur-page
-
-# Only Bernays and Page
-PRMUSEUM_ENABLED_AGENTS=bernays,arthur-page
 ```
 
-An agent appears only when it is both listed in `PRMUSEUM_ENABLED_AGENTS` and has a matching `ELEVENLABS_AGENT_*` value.
+Remove a slug to hide/disable that agent without deleting its Agent ID.
 
-## Ten-minute timer
+## Timer
 
-The app defaults to 600 seconds. If your existing Vercel project still has:
-
-```env
-NEXT_PUBLIC_SESSION_SECONDS=300
-```
-
-change it to:
+The frontend defaults to 600 seconds (10 minutes):
 
 ```env
 NEXT_PUBLIC_SESSION_SECONDS=600
 ```
 
-The frontend warns the agent at about 45 seconds remaining and requests a brief closing response near 20 seconds remaining.
-
-Also set **Max conversation duration** to at least 600 seconds on every ElevenLabs agent. Transfer destinations use their own agent configuration for max duration.
-
-## Arthur W. Page
-
-Add this Vercel variable:
-
-```env
-ELEVENLABS_AGENT_ARTHUR_PAGE=agent_...
-```
-
-The included `public/portraits/arthur-page.svg` is a placeholder. Replace it with a museum-approved portrait when ready.
-
-## Agent-transfer UI synchronization
-
-ElevenLabs now exposes a system dynamic variable named:
-
-```text
-system__current_agent_id
-```
-
-It is automatically updated after an agent-to-agent transfer. The v4 app uses a client tool named:
-
-```text
-syncActiveAgent
-```
-
-with the parameter:
-
-```text
-agent_id
-```
-
-Configure that parameter from the ElevenLabs dynamic variable `system__current_agent_id` (or `{{system__current_agent_id}}` where template syntax is requested). The browser then calls `/api/resolve-agent`, and the server maps the actual ElevenLabs Agent ID to the matching PRMuseum profile using the existing Vercel `ELEVENLABS_AGENT_*` environment variables.
-
-This is more reliable than asking the LLM to choose a PRMuseum slug. The receiving agent should call `syncActiveAgent` immediately after it becomes active and before its first substantive spoken response.
-
-There is no extra API-key scope needed for this. Keep `convai_write`, which is already required by the WebRTC token endpoint.
-
-See `ELEVENLABS-MULTI-AGENT-SETUP.txt` for the exact configuration.
-
-## Typed questions
-
-`sendUserMessage()` is used so typed text is handled as an actual visitor turn inside the same voice conversation. A recommended-question button uses the same path. If a question is clicked before the session starts, the app starts the voice session and then submits that question.
-
-## Subtitles
-
-The v4 app uses the React SDK `onAudioAlignment` callback. ElevenLabs supplies character-level timing (`chars`, `char_start_times_ms`, and `char_durations_ms`) with agent speech. The UI groups those timings into progressive text runs so the caption grows while the words are actually being spoken rather than jumping to the complete response.
-
-For every agent that can begin a conversation, enable the **audio** client event under the agent's **Advanced → Client events** settings. Transfers inherit the parent agent's client-event configuration, but keeping this enabled consistently on every agent ensures captions work regardless of which figure starts the session.
-
-If alignment is unavailable, the app falls back to displaying the completed agent-response text.
-
-No extra API-key permission is required for audio alignment.
-
-## Vercel deployment
-
-Your repository root must contain `package.json` and `app/` directly:
-
-```text
-repo-root/
-├── app/
-├── components/
-├── lib/
-├── public/
-├── package.json
-└── ...
-```
-
-After changing any Vercel environment variable, redeploy the Production deployment.
+Also make sure each ElevenLabs agent's own maximum conversation duration is at least 600 seconds.
 
 ## WordPress
 
@@ -146,22 +149,7 @@ allow="microphone; autoplay"
 
 ```text
 lib/agents.ts                       Names, bios, portraits, suggested questions
-lib/serverAgents.ts                 Server-side Agent ID, identity resolution, and availability logic
-components/AgentExperience.tsx      Main UI, audio-aligned subtitles, identity sync, transfers, timer
+lib/serverAgents.ts                 Server Agent IDs, availability, backend feature flags
+components/AgentExperience.tsx      Conversation UI, transcript, transfers, AI dialogue, timer
 app/globals.css                     Styling
-ELEVENLABS-MULTI-AGENT-SETUP.txt    ElevenLabs setup instructions
 ```
-
-## v4.3 — transfer-event profile synchronization
-
-Profile identity no longer depends on an agent remembering to call a UI client tool.
-The app listens for ElevenLabs `agent_tool_request` and `agent_tool_response` events for
-the built-in `transfer_to_agent` system tool. It resolves the destination from the live
-ElevenLabs transfer configuration and changes the profile only after the transfer tool
-reports success.
-
-ElevenLabs setup: enable `agent_tool_request` and `agent_tool_response` under Client
-Events for every PRMuseum agent that can start a call. Also give the server API key
-Conversational AI / Agents **Read** in addition to **Write**, because `/api/resolve-transfer`
-reads the source agent's transfer configuration. Keep your existing transfer rules;
-do not rewrite them for portrait synchronization.

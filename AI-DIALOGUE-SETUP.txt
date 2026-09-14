@@ -1,0 +1,36 @@
+PRMuseum AI-to-AI Dialogue — v4.4
+=================================
+
+This feature does NOT require a new ElevenLabs tool or a new prompt block.
+It reuses the app's existing transfer_to_agent behavior.
+
+Vercel
+------
+Enable:
+PRMUSEUM_AI_DIALOGUE_ENABLED=true
+
+Disable entirely:
+PRMUSEUM_AI_DIALOGUE_ENABLED=false
+
+Optional maximum autonomous voice turns (2–12):
+PRMUSEUM_AI_DIALOGUE_MAX_TURNS=6
+
+ElevenLabs
+----------
+1. Keep your currently working transfer rules.
+2. Each pair of agents you want to use in AI dialogue must be able to transfer to one another.
+3. Do not add special broad transfer conditions just for this feature.
+4. Keep client events enabled for:
+   - audio
+   - agent_tool_request
+   - agent_tool_response
+
+Behavior
+--------
+The visitor begins a normal conversation, chooses a second figure and a topic,
+and clicks Start dialogue. The current agent speaks first. After each substantive
+voice turn, the app issues an internal transfer request to the other selected
+agent. The same ElevenLabs conversation and transcript are retained across the
+handoff. The microphone is muted while the two figures alternate.
+
+Stop AI dialogue restores the visitor's previous microphone state.

@@ -8,10 +8,14 @@ export function HistoricalVoiceApp({
   agentParam,
   returnUrl,
   enabledAgentSlugs,
+  aiDialogueEnabled,
+  aiDialogueMaxTurns,
 }: {
   agentParam: string | null;
   returnUrl: string | null;
   enabledAgentSlugs: AgentSlug[];
+  aiDialogueEnabled: boolean;
+  aiDialogueMaxTurns: number;
 }) {
   return (
     <ConversationProvider>
@@ -19,6 +23,8 @@ export function HistoricalVoiceApp({
         agentParam={agentParam}
         returnUrl={returnUrl}
         enabledAgentSlugs={enabledAgentSlugs}
+        aiDialogueEnabled={aiDialogueEnabled}
+        aiDialogueMaxTurns={aiDialogueMaxTurns}
       />
     </ConversationProvider>
   );
