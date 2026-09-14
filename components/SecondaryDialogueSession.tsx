@@ -101,7 +101,7 @@ export function SecondaryDialogueSession({
     return () => {
       cancelled = true;
       if (readyTimerRef.current !== null) window.clearTimeout(readyTimerRef.current);
-      void conversation.endSession().catch(() => undefined);
+      conversation.endSession();
     };
     // slug intentionally defines the lifetime of this independent session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -143,12 +143,13 @@ export function SecondaryDialogueSession({
 
     lastCommandIdRef.current = command.id;
     armedRef.current = true;
+    const commandText = command.text;
 
     async function send() {
       try {
         await conversation.setVolume({ volume: 1 });
         conversation.setMuted(true);
-        conversation.sendUserMessage(command.text);
+        conversation.sendUserMessage(commandText);
       } catch (error) {
         console.error("Unable to send AI dialogue relay to secondary agent", error);
         onError("The AI dialogue could not send the next turn to the second historical figure.");
