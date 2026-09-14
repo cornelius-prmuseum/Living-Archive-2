@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" role="img" aria-labelledby="title desc">
+  <title id="title">Arthur W. Page placeholder portrait</title>
+  <desc id="desc">A generic archival-style silhouette placeholder to replace with a museum-approved Arthur W. Page portrait.</desc>
+  <rect width="400" height="400" fill="#e8ddca"/>
+  <circle cx="200" cy="147" r="76" fill="#8a8a82"/>
+  <path d="M68 387c10-99 58-151 132-151s122 52 132 151" fill="#70736f"/>
+  <circle cx="200" cy="200" r="188" fill="none" stroke="#1f5f8b" stroke-width="5" opacity=".35"/>
+</svg>

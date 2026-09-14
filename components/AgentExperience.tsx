@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent } from "react";
 import { useConversation } from "@elevenlabs/react";
 import {
   AGENTS,
-  AGENT_ORDER,
   getPublicAgent,
   isAgentSlug,
   type AgentSlug,
@@ -14,6 +14,11 @@ type TranscriptEntry = {
   role: "visitor" | "agent";
   text: string;
   speakerSlug?: AgentSlug;
+};
+
+type SubtitleLine = {
+  text: string;
+  speakerSlug: AgentSlug;
 };
 
 type ScreenState = "ready" | "active" | "wrapping" | "finished" | "error";
@@ -52,8 +57,9 @@ function normalizeMessage(event: unknown, activeSpeaker: AgentSlug): TranscriptE
   if (!text || text === CLOSE_PROMPT || text.startsWith(SWITCH_PROMPT_PREFIX)) return null;
 
   const source = String(e.source ?? e.role ?? e.type ?? "").toLowerCase();
-  const role: TranscriptEntry["role"] =
-    source.includes("user") || source.includes("visitor") ? "visitor" : "agent";
+  const isUser = Boolean(nestedUser) || source.includes("user") || source.includes("visitor");
+  const isAgent = Boolean(nestedAgent) || source.includes("agent") || source.includes("assistant");
+  const role: TranscriptEntry["role"] = isUser && !isAgent ? "visitor" : "agent";
 
   return {
     role,
@@ -81,33 +87,42 @@ function mergeTranscript(previous: TranscriptEntry[], incoming: TranscriptEntry)
 export function AgentExperience({
   agentParam,
   returnUrl,
+  enabledAgentSlugs,
 }: {
   agentParam: string | null;
   returnUrl: string | null;
+  enabledAgentSlugs: AgentSlug[];
 }) {
-  const initialAgent = useMemo(() => getPublicAgent(agentParam), [agentParam]);
+  const enabledAgents = useMemo(() => enabledAgentSlugs.filter((slug) => Boolean(AGENTS[slug])), [enabledAgentSlugs]);
+  const initialAgent = useMemo(() => getPublicAgent(agentParam, enabledAgents), [agentParam, enabledAgents]);
   const [activeAgentSlug, setActiveAgentSlug] = useState<AgentSlug>(initialAgent.slug);
   const [pendingTransferSlug, setPendingTransferSlug] = useState<AgentSlug | null>(null);
   const activeAgentSlugRef = useRef<AgentSlug>(initialAgent.slug);
   const agent = AGENTS[activeAgentSlug];
+  const noAgentsAvailable = enabledAgents.length === 0;
 
-  const configuredSeconds = Number(process.env.NEXT_PUBLIC_SESSION_SECONDS || 300);
+  const configuredSeconds = Number(process.env.NEXT_PUBLIC_SESSION_SECONDS || 600);
   const sessionSeconds = Number.isFinite(configuredSeconds) && configuredSeconds >= 60
     ? Math.floor(configuredSeconds)
-    : 300;
+    : 600;
 
-  const [screen, setScreen] = useState<ScreenState>("ready");
+  const [screen, setScreen] = useState<ScreenState>(noAgentsAvailable ? "error" : "ready");
   const [remaining, setRemaining] = useState(sessionSeconds);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState(
+    noAgentsAvailable ? "No historical voice agents are currently enabled on the server." : "",
+  );
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [textQuestion, setTextQuestion] = useState("");
+  const [subtitle, setSubtitle] = useState<SubtitleLine | null>(null);
 
   const warningSentRef = useRef(false);
   const closePromptSentRef = useRef(false);
   const closingSpeechStartedRef = useRef(false);
   const endRequestedRef = useRef(false);
   const closePromptSentAtRef = useRef<number | null>(null);
+  const wasSpeakingRef = useRef(false);
 
   const updateAgentUrl = useCallback((slug: AgentSlug) => {
     if (typeof window === "undefined") return;
@@ -117,22 +132,27 @@ export function AgentExperience({
   }, []);
 
   const confirmActiveAgent = useCallback((slug: AgentSlug) => {
+    if (!enabledAgents.includes(slug)) return;
     activeAgentSlugRef.current = slug;
     setActiveAgentSlug(slug);
     setPendingTransferSlug(null);
+    setSubtitle(null);
     updateAgentUrl(slug);
-  }, [updateAgentUrl]);
+  }, [enabledAgents, updateAgentUrl]);
 
   const conversation = useConversation({
     clientTools: {
       setActiveAgent: (parameters: { agent_slug?: string }) => {
         const requested = parameters?.agent_slug;
         if (!isAgentSlug(requested)) {
-          return "Unknown historical figure. Use bernays, ivy-lee, or lippmann.";
+          return "Unknown historical figure.";
+        }
+        if (!enabledAgents.includes(requested)) {
+          return "That historical figure is currently disabled in the PRMuseum interface.";
         }
 
         confirmActiveAgent(requested);
-        return `Museum display updated to ${AGENTS[requested].name}.`;
+        return `PRMuseum display synchronized to ${AGENTS[requested].name}.`;
       },
     },
     onConnect: () => {
@@ -146,7 +166,12 @@ export function AgentExperience({
     onMessage: (message) => {
       const normalized = normalizeMessage(message, activeAgentSlugRef.current);
       if (!normalized) return;
+
       setTranscript((previous) => mergeTranscript(previous, normalized));
+
+      if (normalized.role === "agent" && normalized.speakerSlug) {
+        setSubtitle({ text: normalized.text, speakerSlug: normalized.speakerSlug });
+      }
     },
     onError: (error) => {
       console.error(error);
@@ -162,6 +187,7 @@ export function AgentExperience({
     closingSpeechStartedRef.current = false;
     endRequestedRef.current = false;
     closePromptSentAtRef.current = null;
+    wasSpeakingRef.current = false;
   }, []);
 
   const endNow = useCallback(async () => {
@@ -194,9 +220,12 @@ export function AgentExperience({
     }
   }, [conversation, endNow]);
 
-  const startConversation = useCallback(async () => {
+  const startConversation = useCallback(async (initialQuestion?: string) => {
+    if (noAgentsAvailable) return;
+
     setErrorMessage("");
     setTranscript([]);
+    setSubtitle(null);
     setRemaining(sessionSeconds);
     setConversationId(null);
     setPendingTransferSlug(null);
@@ -218,11 +247,12 @@ export function AgentExperience({
         throw new Error(data.error || "Unable to create a conversation token.");
       }
 
-      const id = await conversation.startSession({
-        conversationToken: data.token,
-      });
-
+      const id = await conversation.startSession({ conversationToken: data.token });
       setConversationId(typeof id === "string" ? id : data.conversationId ?? null);
+
+      if (initialQuestion?.trim()) {
+        conversation.sendUserMessage(initialQuestion.trim());
+      }
     } catch (error) {
       console.error(error);
       setErrorMessage(
@@ -232,33 +262,56 @@ export function AgentExperience({
       );
       setScreen("error");
     }
-  }, [activeAgentSlug, conversation, resetSessionRefs, sessionSeconds]);
+  }, [activeAgentSlug, conversation, noAgentsAvailable, resetSessionRefs, sessionSeconds]);
+
+  const sendTextQuestion = useCallback(async (question: string) => {
+    const clean = question.trim();
+    if (!clean || screen === "wrapping") return;
+
+    setTextQuestion("");
+
+    if (conversation.status === "connected") {
+      try {
+        conversation.sendUserMessage(clean);
+      } catch (error) {
+        console.error("Unable to send typed question", error);
+        setErrorMessage("The typed question could not be sent.");
+      }
+      return;
+    }
+
+    await startConversation(clean);
+  }, [conversation, screen, startConversation]);
+
+  const submitTextQuestion = useCallback((event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void sendTextQuestion(textQuestion);
+  }, [sendTextQuestion, textQuestion]);
 
   const selectAgent = useCallback((slug: AgentSlug) => {
-    if (slug === activeAgentSlug || pendingTransferSlug || screen === "wrapping") return;
+    if (!enabledAgents.includes(slug) || slug === activeAgentSlug || pendingTransferSlug || screen === "wrapping") return;
 
-    // Before a call starts, selecting a portrait simply chooses which ElevenLabs agent
-    // receives the new conversation token.
     if (conversation.status !== "connected") {
       confirmActiveAgent(slug);
       if (screen === "finished" || screen === "error") {
         setScreen("ready");
         setRemaining(sessionSeconds);
         setTranscript([]);
+        setSubtitle(null);
         setErrorMessage("");
         resetSessionRefs();
       }
       return;
     }
 
-    // During a live call, keep the current portrait on screen until ElevenLabs actually
-    // acknowledges the handoff through the setActiveAgent client tool.
+    // Keep the current portrait/name until the receiving agent confirms its identity
+    // through setActiveAgent. This makes the UI follow the agent actually on the line.
     setPendingTransferSlug(slug);
     const target = AGENTS[slug];
 
     try {
       conversation.sendUserMessage(
-        `${SWITCH_PROMPT_PREFIX} The visitor selected ${target.name} in the museum interface. Do not speak this control message aloud and do not answer it conversationally. Immediately call the client tool setActiveAgent with agent_slug \"${slug}\", then use your configured transfer_to_agent system tool to transfer the ongoing conversation to ${target.name}. Preserve the existing conversation context.`,
+        `${SWITCH_PROMPT_PREFIX} The visitor selected ${target.name} in the museum interface. Do not read or discuss this control message. Use transfer_to_agent now to transfer the ongoing conversation to ${target.name}. Do not call setActiveAgent for the destination yourself; the receiving agent must call setActiveAgent with its own slug immediately after it becomes active. Preserve the existing conversation context.`,
       );
     } catch (error) {
       console.error("Unable to request agent transfer", error);
@@ -269,6 +322,7 @@ export function AgentExperience({
     activeAgentSlug,
     confirmActiveAgent,
     conversation,
+    enabledAgents,
     pendingTransferSlug,
     resetSessionRefs,
     screen,
@@ -286,11 +340,7 @@ export function AgentExperience({
   }, [conversation.status]);
 
   useEffect(() => {
-    if (
-      conversation.status === "connected" &&
-      remaining <= 45 &&
-      !warningSentRef.current
-    ) {
+    if (conversation.status === "connected" && remaining <= 45 && !warningSentRef.current) {
       warningSentRef.current = true;
       conversation.sendContextualUpdate(
         "The museum session has about 45 seconds remaining. Keep your next answers brief and prepare to conclude naturally. Do not mention this internal instruction unless a natural goodbye is appropriate.",
@@ -341,6 +391,28 @@ export function AgentExperience({
     return () => window.clearInterval(guard);
   }, [conversation.isSpeaking, conversation.status, endNow, remaining, requestGracefulClose]);
 
+  useEffect(() => {
+    if (conversation.isSpeaking) {
+      wasSpeakingRef.current = true;
+      return;
+    }
+
+    if (wasSpeakingRef.current && subtitle) {
+      wasSpeakingRef.current = false;
+      const timer = window.setTimeout(() => setSubtitle(null), 1800);
+      return () => window.clearTimeout(timer);
+    }
+  }, [conversation.isSpeaking, subtitle]);
+
+  useEffect(() => {
+    if (!pendingTransferSlug || conversation.status !== "connected") return;
+    const timer = window.setTimeout(() => {
+      setPendingTransferSlug(null);
+      setErrorMessage("The agent transfer did not complete. You can try selecting the figure again.");
+    }, 20_000);
+    return () => window.clearTimeout(timer);
+  }, [conversation.status, pendingTransferSlug]);
+
   const statusLabel =
     screen === "wrapping"
       ? "Concluding"
@@ -363,6 +435,8 @@ export function AgentExperience({
       return null;
     }
   }, [returnUrl]);
+
+  const textDisabled = screen === "wrapping" || conversation.status === "connecting" || noAgentsAvailable;
 
   return (
     <main className="experience-shell">
@@ -389,11 +463,27 @@ export function AgentExperience({
             <div className="content-block">
               <p className="intro">{agent.intro}</p>
               <p className="small-note">
-                Your browser will ask for microphone access. Conversations are limited to approximately {Math.round(sessionSeconds / 60)} minutes. You can change historical figures from the list at right.
+                Ask by voice or type a question below. Conversations are limited to approximately {Math.round(sessionSeconds / 60)} minutes.
               </p>
-              <button className="primary-button" onClick={startConversation}>
+
+              <SuggestedQuestions
+                questions={agent.recommendedQuestions}
+                onAsk={(question) => void sendTextQuestion(question)}
+                disabled={textDisabled}
+              />
+
+              <button className="primary-button" onClick={() => void startConversation()} disabled={noAgentsAvailable}>
                 <MicIcon /> Begin Conversation
               </button>
+
+              <QuestionComposer
+                value={textQuestion}
+                onChange={setTextQuestion}
+                onSubmit={submitTextQuestion}
+                disabled={textDisabled}
+                placeholder={`Type a question for ${agent.shortName}…`}
+                buttonLabel="Ask"
+              />
             </div>
           )}
 
@@ -411,11 +501,18 @@ export function AgentExperience({
               </div>
 
               <div className={`voice-orb ${conversation.isSpeaking ? "agent-speaking" : "listening"}`} aria-hidden="true">
-                <span />
-                <span />
-                <span />
-                <span />
-                <span />
+                <span /><span /><span /><span /><span />
+              </div>
+
+              <div className={`live-subtitles ${subtitle ? "visible" : ""}`} aria-live="polite" aria-atomic="true">
+                {subtitle ? (
+                  <>
+                    <span>{AGENTS[subtitle.speakerSlug].name}</span>
+                    <p>{subtitle.text}</p>
+                  </>
+                ) : (
+                  <p className="subtitle-placeholder">Subtitles will appear here while the historical figure speaks.</p>
+                )}
               </div>
 
               <p className="live-instruction">
@@ -424,9 +521,25 @@ export function AgentExperience({
                   : pendingTransferSlug
                     ? `Transferring the conversation to ${AGENTS[pendingTransferSlug].name}…`
                     : conversation.isSpeaking
-                      ? "You can listen, or begin speaking when the response is finished."
-                      : "Speak naturally. Your microphone is live."}
+                      ? "Listen to the response, or type your next question below."
+                      : "Speak naturally or type a question below."}
               </p>
+
+              <QuestionComposer
+                value={textQuestion}
+                onChange={setTextQuestion}
+                onSubmit={submitTextQuestion}
+                disabled={textDisabled}
+                placeholder={`Type a question for ${agent.shortName}…`}
+                buttonLabel="Send"
+              />
+
+              <SuggestedQuestions
+                questions={agent.recommendedQuestions}
+                onAsk={(question) => void sendTextQuestion(question)}
+                disabled={textDisabled}
+                compact
+              />
 
               <div className="control-row">
                 <button
@@ -474,6 +587,7 @@ export function AgentExperience({
                   setScreen("ready");
                   setRemaining(sessionSeconds);
                   setTranscript([]);
+                  setSubtitle(null);
                   resetSessionRefs();
                 }}>
                   Start Another Conversation
@@ -492,12 +606,14 @@ export function AgentExperience({
             <div className="content-block error-block">
               <h2>Conversation unavailable</h2>
               <p>{errorMessage || "The voice conversation could not be started."}</p>
-              <button className="primary-button" onClick={() => {
-                setScreen("ready");
-                setErrorMessage("");
-              }}>
-                Try Again
-              </button>
+              {!noAgentsAvailable && (
+                <button className="primary-button" onClick={() => {
+                  setScreen("ready");
+                  setErrorMessage("");
+                }}>
+                  Try Again
+                </button>
+              )}
             </div>
           )}
 
@@ -515,7 +631,7 @@ export function AgentExperience({
           </div>
 
           <div className="agent-list">
-            {AGENT_ORDER.map((slug) => {
+            {enabledAgents.map((slug) => {
               const candidate = AGENTS[slug];
               const isActive = slug === activeAgentSlug;
               const isPending = slug === pendingTransferSlug;
@@ -543,11 +659,68 @@ export function AgentExperience({
           </div>
 
           <p className="rail-note">
-            During a live conversation, selecting another figure requests an ElevenLabs agent transfer without starting a new call.
+            The main portrait follows the agent that confirms it is actually on the line, including transfers requested by voice or typed question.
           </p>
         </aside>
       </div>
     </main>
+  );
+}
+
+function SuggestedQuestions({
+  questions,
+  onAsk,
+  disabled,
+  compact = false,
+}: {
+  questions: readonly [string, string, string];
+  onAsk: (question: string) => void;
+  disabled: boolean;
+  compact?: boolean;
+}) {
+  return (
+    <div className={`suggested-questions ${compact ? "compact" : ""}`}>
+      <p>Not sure what to ask?</p>
+      <div className="suggested-question-list">
+        {questions.map((question) => (
+          <button key={question} type="button" onClick={() => onAsk(question)} disabled={disabled}>
+            {question}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function QuestionComposer({
+  value,
+  onChange,
+  onSubmit,
+  disabled,
+  placeholder,
+  buttonLabel,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  disabled: boolean;
+  placeholder: string;
+  buttonLabel: string;
+}) {
+  return (
+    <form className="question-composer" onSubmit={onSubmit}>
+      <label className="sr-only" htmlFor="typed-question">Type your question</label>
+      <input
+        id="typed-question"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        disabled={disabled}
+        maxLength={500}
+        autoComplete="off"
+      />
+      <button type="submit" disabled={disabled || !value.trim()}>{buttonLabel}</button>
+    </form>
   );
 }
 

@@ -1,110 +1,111 @@
-PRMuseum Multi-Agent Setup — ElevenLabs
-========================================
+PRMUSEUM MULTI-AGENT SETUP
+==========================
 
-This app uses TWO ElevenLabs mechanisms together:
+AVAILABLE UI SLUGS
+------------------
+Edward Bernays = bernays
+Ivy Lee = ivy-lee
+Walter Lippmann = lippmann
+Arthur W. Page = arthur-page
 
-1. ElevenLabs' built-in `transfer_to_agent` SYSTEM TOOL performs the actual
-   live handoff and preserves the ongoing conversation.
-2. A CLIENT TOOL named `setActiveAgent` tells the webpage which portrait/name
-   to display. It does not perform the transfer by itself.
+IMPORTANT UI-SYNC DESIGN
+------------------------
+The browser does not guess who is speaking after an ElevenLabs transfer.
+ElevenLabs preserves the transcript across transfers, but transcript messages do not expose an agent_id.
+Therefore the RECEIVING agent must identify itself to the webpage using the client tool below.
 
---------------------------------------------------
-A. CREATE THIS CLIENT TOOL ON EVERY HISTORICAL AGENT
---------------------------------------------------
+This is especially important for a spoken or typed request such as:
+"Let me speak with Arthur Page."
 
+The old agent should perform transfer_to_agent. The receiving Arthur Page agent should then call
+setActiveAgent with agent_slug="arthur-page" before its first substantive spoken response.
+Only then does the main portrait/name change.
+
+1. CREATE THIS CLIENT TOOL ON EVERY AGENT
+------------------------------------------
 Tool type: Client
-Name: setActiveAgent
+Name (case-sensitive): setActiveAgent
 
 Description:
-Update the PRMuseum webpage so it displays the historical figure who is
-currently speaking. This tool changes the interface only; it does not transfer
-or change the ElevenLabs agent. Whenever transferring to another historical
-figure, call this tool with the destination figure's slug immediately before
-calling transfer_to_agent. Whenever you become the active agent after a
-transfer, call it with your own slug before your first substantive response.
+Update the PRMuseum webpage so it displays the historical figure who is actually
+currently on the line. Call this when this agent becomes active, especially after
+receiving a transferred conversation. This tool only synchronizes the webpage.
 
 Parameter:
 Identifier: agent_slug
 Type: String
 Required: Yes
-Description: One of exactly: bernays, ivy-lee, lippmann
 
-Recommended: enable "Wait for response" so the agent knows the UI update
-succeeded before continuing.
+Description:
+Your own PRMuseum historical figure slug. Use exactly one of:
+bernays
+ivy-lee
+lippmann
+arthur-page
 
-IMPORTANT: Tool names and parameter names are case-sensitive.
+Wait for response: ON
 
---------------------------------------------------
-B. ENABLE TRANSFER TO AI AGENT ON EVERY AGENT
---------------------------------------------------
+2. ADD transfer_to_agent TO EVERY AGENT
+---------------------------------------
+Give each enabled agent transfer rules to every other enabled agent.
+Examples:
+- Bernays -> Ivy Lee, Walter Lippmann, Arthur W. Page
+- Ivy Lee -> Bernays, Walter Lippmann, Arthur W. Page
+- Lippmann -> Bernays, Ivy Lee, Arthur W. Page
+- Arthur Page -> Bernays, Ivy Lee, Walter Lippmann
 
-In each ElevenLabs historical agent:
-Agent -> Tools -> Add Tool -> System -> Transfer to AI Agent
+A useful condition is:
+Transfer when the visitor asks to speak with [NAME], addresses a question directly
+to [NAME], or an internal PRMuseum interface control message requests a transfer to [NAME].
 
-Create transfer rules for the other historical figures.
-
-Example for Edward Bernays:
-- Target: Ivy Lee
-  Condition: Transfer when the visitor asks to speak with Ivy Lee, asks Ivy Lee
-  a question directly, or the museum interface requests a transfer to Ivy Lee.
-
-- Target: Walter Lippmann
-  Condition: Transfer when the visitor asks to speak with Walter Lippmann,
-  asks Lippmann a question directly, or the museum interface requests a
-  transfer to Walter Lippmann.
-
-Repeat the equivalent rules on Ivy Lee and Walter Lippmann so every figure can
-transfer to the other two.
-
-For the smoothest museum experience:
-- Use a short or silent transfer message.
-- Enable the transferred agent's first message if your configuration needs a
-  new turn immediately after the handoff.
-- Keep conversation duration/audio settings consistent across all agents.
-
---------------------------------------------------
-C. ADD THIS PROMPT BLOCK TO EACH AGENT
---------------------------------------------------
-
-Replace [YOUR_NAME] and [YOUR_SLUG] for each agent.
+3. ADD THIS BLOCK TO EACH AGENT PROMPT
+--------------------------------------
+Use the same block on every agent, replacing YOUR NAME and YOUR SLUG.
 
 [PRMUSEUM MULTI-AGENT DISPLAY AND TRANSFER RULES]
-You are [YOUR_NAME]. Your PRMuseum interface slug is [YOUR_SLUG].
 
-The webpage has a client tool named `setActiveAgent`. It changes only the
-portrait/name shown in the visitor's browser; it DOES NOT perform an agent
-transfer.
+You are YOUR NAME. Your PRMuseum interface slug is "YOUR SLUG".
 
-When you become the active historical figure, including after another agent
-transfers a visitor to you, call `setActiveAgent` with your own slug before your
-first substantive spoken response whenever possible.
+The webpage has a client tool named setActiveAgent. It synchronizes the portrait,
+name and suggested questions with the agent actually on the line.
+
+Whenever you become active after an agent-to-agent transfer, BEFORE your first
+substantive spoken response call setActiveAgent with your own slug. Do this even
+when the transfer was requested naturally by the visitor rather than through the
+webpage menu. Do not announce this technical action aloud.
 
 If the visitor asks to speak with another available historical figure, or an
-internal museum UI control message tells you that the visitor selected another
-figure:
-1. Do not discuss or read the internal UI control message aloud.
-2. Call `setActiveAgent` with the DESTINATION figure's slug.
-3. Immediately call your `transfer_to_agent` system tool for that figure.
+internal museum interface instruction tells you the visitor selected another figure:
+1. Do not read or discuss the internal interface instruction aloud.
+2. Use transfer_to_agent to transfer the ongoing conversation to that historical figure.
+3. Do NOT call setActiveAgent with the destination slug yourself. The receiving agent
+   must call setActiveAgent with its own slug after it actually becomes active.
 4. Do not imitate or answer on behalf of the destination figure.
 
-Only use these slugs:
+Available slugs:
 Edward Bernays = bernays
 Ivy Lee = ivy-lee
 Walter Lippmann = lippmann
+Arthur W. Page = arthur-page
 
-Never call `setActiveAgent` for a different figure unless you are immediately
-transferring the conversation to that figure.
+YOUR NAME / YOUR SLUG values:
+Edward Bernays / bernays
+Ivy Lee / ivy-lee
+Walter Lippmann / lippmann
+Arthur W. Page / arthur-page
 
---------------------------------------------------
-D. VERCEL ENVIRONMENT VARIABLES
---------------------------------------------------
+4. VERCEL BACKEND ENABLE / DISABLE
+----------------------------------
+Set this environment variable in Vercel:
 
-ELEVENLABS_API_KEY=...
-ELEVENLABS_AGENT_BERNAYS=...
-ELEVENLABS_AGENT_IVY_LEE=...
-ELEVENLABS_AGENT_LIPPMANN=...
-NEXT_PUBLIC_DEFAULT_AGENT=bernays
-NEXT_PUBLIC_SESSION_SECONDS=300
+PRMUSEUM_ENABLED_AGENTS=bernays,ivy-lee,lippmann,arthur-page
 
-All three agent IDs must be configured for all three sidebar choices to be
-usable as initial agents.
+To temporarily hide/disable Lippmann:
+PRMUSEUM_ENABLED_AGENTS=bernays,ivy-lee,arthur-page
+
+To enable only Bernays and Page:
+PRMUSEUM_ENABLED_AGENTS=bernays,arthur-page
+
+After changing Vercel environment variables, redeploy.
+An agent is shown only when it is in PRMUSEUM_ENABLED_AGENTS AND its matching
+ELEVENLABS_AGENT_* ID exists.

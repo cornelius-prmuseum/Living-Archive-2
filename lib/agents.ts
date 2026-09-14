@@ -1,4 +1,4 @@
-export type AgentSlug = "bernays" | "ivy-lee" | "lippmann";
+export type AgentSlug = "bernays" | "ivy-lee" | "lippmann" | "arthur-page";
 
 export type PublicAgent = {
   slug: AgentSlug;
@@ -8,6 +8,7 @@ export type PublicAgent = {
   subtitle: string;
   portrait: string;
   intro: string;
+  recommendedQuestions: readonly [string, string, string];
 };
 
 export const AGENTS: Record<AgentSlug, PublicAgent> = {
@@ -20,6 +21,11 @@ export const AGENTS: Record<AgentSlug, PublicAgent> = {
     portrait: "/portraits/bernays.svg",
     intro:
       "Speak with a historically informed interpretation of Edward Bernays about public relations, persuasion, campaigns, and the profession he helped shape.",
+    recommendedQuestions: [
+      "How did you persuade Americans to eat bacon and eggs?",
+      "What did you mean by engineering consent?",
+      "How do you view the ethics of public relations?",
+    ],
   },
   "ivy-lee": {
     slug: "ivy-lee",
@@ -30,6 +36,11 @@ export const AGENTS: Record<AgentSlug, PublicAgent> = {
     portrait: "/portraits/ivy-lee.svg",
     intro:
       "Speak with a historically informed interpretation of Ivy Lee about publicity, corporate communication, journalism, and the early development of public relations.",
+    recommendedQuestions: [
+      "Why did you issue the Declaration of Principles?",
+      "How should a company communicate during a crisis?",
+      "What responsibility does a company have to the press and public?",
+    ],
   },
   lippmann: {
     slug: "lippmann",
@@ -40,22 +51,42 @@ export const AGENTS: Record<AgentSlug, PublicAgent> = {
     portrait: "/portraits/lippmann.svg",
     intro:
       "Speak with a historically informed interpretation of Walter Lippmann about public opinion, journalism, democracy, propaganda, and mass communication.",
+    recommendedQuestions: [
+      "What did you mean by pictures in our heads?",
+      "Why were you skeptical of public opinion?",
+      "How did World War I shape your thinking about propaganda?",
+    ],
+  },
+  "arthur-page": {
+    slug: "arthur-page",
+    name: "Arthur W. Page",
+    shortName: "Page",
+    years: "1883–1960",
+    subtitle: "Corporate Public Relations Pioneer",
+    portrait: "/portraits/arthur-page.svg",
+    intro:
+      "Speak with a historically informed interpretation of Arthur W. Page about corporate character, management responsibility, public trust, and the development of modern corporate public relations.",
+    recommendedQuestions: [
+      "What principles should guide a company's public relations?",
+      "Why should public relations have a voice in management decisions?",
+      "How did your work at AT&T shape your view of corporate responsibility?",
+    ],
   },
 };
 
-export const AGENT_ORDER: AgentSlug[] = ["bernays", "ivy-lee", "lippmann"];
+export const AGENT_ORDER: AgentSlug[] = ["bernays", "ivy-lee", "lippmann", "arthur-page"];
 
 export function isAgentSlug(value: string | null | undefined): value is AgentSlug {
-  return value === "bernays" || value === "ivy-lee" || value === "lippmann";
+  return value === "bernays" || value === "ivy-lee" || value === "lippmann" || value === "arthur-page";
 }
 
-export function getPublicAgent(value: string | null): PublicAgent {
+export function getPublicAgent(value: string | null, enabledSlugs: readonly AgentSlug[] = AGENT_ORDER): PublicAgent {
   const fallback = process.env.NEXT_PUBLIC_DEFAULT_AGENT || "bernays";
-  const slug = isAgentSlug(value)
-    ? value
-    : isAgentSlug(fallback)
-      ? fallback
-      : "bernays";
+  const firstEnabled = enabledSlugs[0] ?? "bernays";
+
+  const requested = isAgentSlug(value) && enabledSlugs.includes(value) ? value : null;
+  const configuredFallback = isAgentSlug(fallback) && enabledSlugs.includes(fallback) ? fallback : null;
+  const slug = requested ?? configuredFallback ?? firstEnabled;
 
   return AGENTS[slug];
 }

@@ -1,17 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isAgentSlug, type AgentSlug } from "@/lib/agents";
+import { isAgentSlug } from "@/lib/agents";
+import { getAgentId, isAgentEnabled } from "@/lib/serverAgents";
 
 export const dynamic = "force-dynamic";
-
-function getAgentId(slug: AgentSlug): string | undefined {
-  const ids: Record<AgentSlug, string | undefined> = {
-    bernays: process.env.ELEVENLABS_AGENT_BERNAYS,
-    "ivy-lee": process.env.ELEVENLABS_AGENT_IVY_LEE,
-    lippmann: process.env.ELEVENLABS_AGENT_LIPPMANN,
-  };
-
-  return ids[slug];
-}
 
 export async function GET(request: NextRequest) {
   const apiKey = process.env.ELEVENLABS_API_KEY;
@@ -19,6 +10,10 @@ export async function GET(request: NextRequest) {
 
   if (!isAgentSlug(requestedAgent)) {
     return NextResponse.json({ error: "Unknown historical figure." }, { status: 400 });
+  }
+
+  if (!isAgentEnabled(requestedAgent)) {
+    return NextResponse.json({ error: "That historical figure is not currently available." }, { status: 404 });
   }
 
   const agentId = getAgentId(requestedAgent);
@@ -36,9 +31,7 @@ export async function GET(request: NextRequest) {
   try {
     const elevenLabsResponse = await fetch(url, {
       method: "GET",
-      headers: {
-        "xi-api-key": apiKey,
-      },
+      headers: { "xi-api-key": apiKey },
       cache: "no-store",
     });
 
@@ -57,15 +50,8 @@ export async function GET(request: NextRequest) {
     };
 
     return NextResponse.json(
-      {
-        token: data.token,
-        conversationId: data.conversation_id ?? null,
-      },
-      {
-        headers: {
-          "Cache-Control": "no-store, max-age=0",
-        },
-      },
+      { token: data.token, conversationId: data.conversation_id ?? null },
+      { headers: { "Cache-Control": "no-store, max-age=0" } },
     );
   } catch (error) {
     console.error("ElevenLabs token request error", error);

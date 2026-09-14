@@ -1,209 +1,146 @@
-# PRMuseum Historical Voice App
+# PRMuseum Historical Voice App — Multi-Agent v3
 
-A reusable Next.js / Vercel frontend for PRMuseum historical voice experiences powered by ElevenLabs Agents.
+A Next.js/Vercel frontend for PRMuseum historical voice agents powered by ElevenLabs.
 
-It is designed to reproduce the *behavior* of the Ask Bernays standalone app without depending on its private source code. One deployment can serve several historical figures using a query parameter:
+## Included in this version
 
-- `/?agent=bernays`
-- `/?agent=ivy-lee`
-- `/?agent=lippmann`
+- Edward Bernays, Ivy Lee, Walter Lippmann, and Arthur W. Page
+- Right-side agent selector with portraits and active-agent state
+- Voice questions and typed questions in the same live conversation
+- Three clickable recommended questions for every historical figure
+- Live on-screen subtitles based on incoming ElevenLabs agent-response text
+- UI synchronization after agent-to-agent transfers through the `setActiveAgent` client tool
+- Server-side enable/disable list for agents
+- 10-minute frontend session timer with graceful wrap-up
+- Server-side WebRTC conversation-token route
+- Transcript with the historical figure attached to each agent response
 
-Add `&ref=...` to provide a return destination after the conversation.
-
-## What is included
-
-- Next.js App Router + TypeScript
-- ElevenLabs React SDK using WebRTC
-- Server-side conversation-token endpoint so the ElevenLabs API key is never exposed in the browser
-- Multiple historical figures from one deployment
-- Microphone permission flow
-- Listening / speaking state
-- Mute and manual end controls
-- Optional live transcript panel
-- Five-minute default session timer
-- Graceful close logic intended to prevent mid-sentence cutoff
-- WordPress iframe example
-- Responsive desktop/mobile styling
-
-## 1. Create your ElevenLabs agents
-
-Create or reuse your existing Bernays, Ivy Lee, and Walter Lippmann agents in ElevenLabs.
-
-For each private agent, copy its Agent ID. The ID looks like `agent_...`.
-
-The application does not place those IDs in the public browser bundle. They are mapped on the server.
-
-## 2. Configure the environment variables
-
-Copy `.env.example` to `.env.local` for local development:
-
-```bash
-cp .env.example .env.local
-```
-
-Fill in:
+## Environment variables
 
 ```env
 ELEVENLABS_API_KEY=...
+
 ELEVENLABS_AGENT_BERNAYS=agent_...
 ELEVENLABS_AGENT_IVY_LEE=agent_...
 ELEVENLABS_AGENT_LIPPMANN=agent_...
+ELEVENLABS_AGENT_ARTHUR_PAGE=agent_...
+
+PRMUSEUM_ENABLED_AGENTS=bernays,ivy-lee,lippmann,arthur-page
+
 NEXT_PUBLIC_DEFAULT_AGENT=bernays
+NEXT_PUBLIC_SESSION_SECONDS=600
+```
+
+`PRMUSEUM_ENABLED_AGENTS` is the backend availability switch. To hide an agent, remove its slug and redeploy Vercel. The Agent ID can stay in Vercel.
+
+Examples:
+
+```env
+# All four
+PRMUSEUM_ENABLED_AGENTS=bernays,ivy-lee,lippmann,arthur-page
+
+# Hide Lippmann
+PRMUSEUM_ENABLED_AGENTS=bernays,ivy-lee,arthur-page
+
+# Only Bernays and Page
+PRMUSEUM_ENABLED_AGENTS=bernays,arthur-page
+```
+
+An agent appears only when it is both listed in `PRMUSEUM_ENABLED_AGENTS` and has a matching `ELEVENLABS_AGENT_*` value.
+
+## Ten-minute timer
+
+The app defaults to 600 seconds. If your existing Vercel project still has:
+
+```env
 NEXT_PUBLIC_SESSION_SECONDS=300
 ```
 
-Do not expose `ELEVENLABS_API_KEY` with a `NEXT_PUBLIC_` prefix.
+change it to:
 
-## 3. Add the session-ending instructions to each agent
-
-Copy the relevant text from `ELEVENLABS-PROMPT-ADDON.txt` into the agent's system prompt.
-
-The browser does two things near the deadline:
-
-1. At about 45 seconds remaining it sends a **contextual update** telling the agent to shorten its next responses. This does not itself trigger speech.
-2. At about 20 seconds remaining, once the agent is not already speaking, it mutes the visitor and sends an internal closing message that triggers a brief final response. The frontend waits for that response to finish before disconnecting.
-
-There is an 18-second failsafe after the closing prompt. This trades an exact hard five-minute cutoff for a much lower chance of cutting the character off mid-sentence.
-
-## 4. Install and run locally
-
-Node.js 20.9+ is recommended for modern Next.js.
-
-```bash
-npm install
-npm run dev
+```env
+NEXT_PUBLIC_SESSION_SECONDS=600
 ```
 
-Open:
+The frontend warns the agent at about 45 seconds remaining and requests a brief closing response near 20 seconds remaining.
+
+Also set **Max conversation duration** to at least 600 seconds on every ElevenLabs agent. Transfer destinations use their own agent configuration for max duration.
+
+## Arthur W. Page
+
+Add this Vercel variable:
+
+```env
+ELEVENLABS_AGENT_ARTHUR_PAGE=agent_...
+```
+
+The included `public/portraits/arthur-page.svg` is a placeholder. Replace it with a museum-approved portrait when ready.
+
+## Agent-transfer UI synchronization
+
+ElevenLabs preserves conversation history across `transfer_to_agent`, but individual transcript messages do not expose the active `agent_id` to the browser. For that reason, every historical agent must have the same client tool:
 
 ```text
-http://localhost:3000/?agent=bernays
+setActiveAgent
 ```
 
-Your browser should ask for microphone permission when you press **Begin Conversation**.
+with a required string parameter:
 
-## 5. Deploy to Vercel
+```text
+agent_slug
+```
 
-**Important:** the repository root that Vercel builds must contain `package.json` and the `app/` directory directly. The correct shape is:
+Valid values are:
+
+```text
+bernays
+ivy-lee
+lippmann
+arthur-page
+```
+
+The receiving agent should call `setActiveAgent` with **its own** slug immediately after it becomes active and before its first substantive response. This keeps the main portrait, name, status, recommended questions, transcript speaker attribution, and URL synchronized even when the visitor asks verbally or by typed question to switch agents.
+
+See `ELEVENLABS-MULTI-AGENT-SETUP.txt` for the exact prompt block and transfer setup.
+
+## Typed questions
+
+`sendUserMessage()` is used so typed text is handled as an actual visitor turn inside the same voice conversation. A recommended-question button uses the same path. If a question is clicked before the session starts, the app starts the voice session and then submits that question.
+
+## Subtitles
+
+Incoming ElevenLabs agent-response text is displayed in a subtitle panel while the agent is speaking and briefly after the response ends. The full transcript remains available separately.
+
+## Vercel deployment
+
+Your repository root must contain `package.json` and `app/` directly:
 
 ```text
 repo-root/
-├── package.json
 ├── app/
-│   ├── page.tsx
-│   └── layout.tsx
 ├── components/
 ├── lib/
-└── public/
+├── public/
+├── package.json
+└── ...
 ```
 
-Do **not** leave the project one level deeper as `repo-root/prmuseum-historical-voice-app/app/...` unless you set Vercel **Settings → Build and Deployment → Root Directory** to `prmuseum-historical-voice-app`.
+After changing any Vercel environment variable, redeploy the Production deployment.
 
-Push the project root to GitHub and import the repository into Vercel. In the Vercel project settings, add the same environment variables listed above, then redeploy.
+## WordPress
 
-Your URL will look similar to:
-
-```text
-https://your-project.vercel.app/?agent=bernays
-```
-
-## 6. Embed in WordPress / Divi
-
-See `wordpress-embed.html`.
-
-The key iframe requirement is:
+See `wordpress-embed.html`. The iframe must include:
 
 ```html
 allow="microphone; autoplay"
 ```
 
-Example:
-
-```html
-<iframe
-  src="https://YOUR-APP.vercel.app/?agent=bernays&ref=https%3A%2F%2Fthemuseumofstg.wpengine.com%2Fask-bernays%2F"
-  allow="microphone; autoplay"
-  style="width:100%;height:850px;border:0;"
-></iframe>
-```
-
-In Divi, place the snippet in a **Code** module rather than a Text module.
-
-## 7. Replace the placeholder portraits
-
-The included SVG portraits are deliberately generic placeholders and do not copy assets from the existing Ask Bernays app.
-
-Replace these files with museum-approved images while keeping the same filenames, or update `lib/agents.ts`:
+## Files you will edit most often
 
 ```text
-public/portraits/bernays.svg
-public/portraits/ivy-lee.svg
-public/portraits/lippmann.svg
+lib/agents.ts                       Names, bios, portraits, suggested questions
+lib/serverAgents.ts                 Server-side agent ID and availability logic
+components/AgentExperience.tsx      Main UI, text input, subtitles, transfers, timer
+app/globals.css                     Styling
+ELEVENLABS-MULTI-AGENT-SETUP.txt    ElevenLabs setup instructions
 ```
-
-JPG, PNG, WebP, and SVG can all be used from the public folder.
-
-## Adding another historical figure
-
-Add the slug to `AgentSlug` and `AGENTS` in `lib/agents.ts`, then add a matching environment-variable mapping in `app/api/token/route.ts`.
-
-For example, for George Creel:
-
-```env
-ELEVENLABS_AGENT_CREEL=agent_...
-```
-
-Then expose it as:
-
-```text
-/?agent=creel
-```
-
-## How the graceful timer works
-
-The important implementation is in `components/AgentExperience.tsx`.
-
-- The visible timer begins once the ElevenLabs session connects.
-- At 45 seconds remaining, `sendContextualUpdate()` tells the agent to begin wrapping up without interrupting the current turn.
-- At 20 seconds remaining, the app waits until `isSpeaking` is false.
-- It mutes the user's microphone and uses `sendUserMessage()` to trigger a short final response.
-- That internal control message is filtered out of the UI transcript.
-- After an agent response is observed and `isSpeaking` becomes false, the app calls `endSession()`.
-- An 18-second failsafe handles unusual network or model failures.
-
-This is intentionally different from relying solely on an ElevenLabs hard conversation-duration limit, because a hard duration limit can end while audio is still being played.
-
-## Production notes
-
-Before public launch, consider:
-
-- Adding rate limiting to `/api/token` so a public page cannot generate unlimited paid sessions.
-- Adding a bot challenge if abuse becomes a problem.
-- Deciding whether transcripts should be displayed at all on a museum kiosk.
-- Reviewing ElevenLabs retention / privacy settings for your workspace.
-- Testing Safari/iOS and the actual WordPress iframe, because microphone permissions are more restrictive there than in a direct top-level tab.
-- Keeping the historical/AI disclosure in the surrounding museum page or app UI according to your institutional policy.
-
-## Files to edit most often
-
-```text
-lib/agents.ts                  Names, dates, text, portrait paths
-app/globals.css                Visual design
-components/AgentExperience.tsx UI and timer behavior
-app/api/token/route.ts         Private ElevenLabs Agent ID mapping
-wordpress-embed.html           WordPress embed
-.env.local                     Local secrets (never commit)
-```
-
-## Multi-agent sidebar and live transfers
-
-This version includes a right-hand historical-figure selector. Before a call,
-selecting a figure changes which agent token is requested. During a live call,
-selecting a different figure sends an internal transfer request to the current
-agent; the current ElevenLabs agent must have the built-in `transfer_to_agent`
-system tool configured for the destination.
-
-The page also registers a client tool named `setActiveAgent`. Add that exact
-client tool to every ElevenLabs historical agent so an agent-driven transfer
-can update the main portrait, title, status, URL and transcript attribution.
-See `ELEVENLABS-MULTI-AGENT-SETUP.txt` for the exact dashboard and prompt setup.

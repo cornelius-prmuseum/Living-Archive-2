@@ -1,6 +1,8 @@
 prmuseum-historical-voice-app/
 ├── app/
-│   ├── api/token/route.ts
+│   ├── api/
+│   │   └── token/
+│   │       └── route.ts
 │   ├── globals.css
 │   ├── layout.tsx
 │   └── page.tsx
@@ -8,19 +10,21 @@ prmuseum-historical-voice-app/
 │   ├── AgentExperience.tsx
 │   └── HistoricalVoiceApp.tsx
 ├── lib/
-│   └── agents.ts
+│   ├── agents.ts
+│   └── serverAgents.ts
 ├── public/
 │   └── portraits/
+│       ├── arthur-page.svg
 │       ├── bernays.svg
 │       ├── ivy-lee.svg
 │       └── lippmann.svg
 ├── .env.example
 ├── .gitignore
+├── ELEVENLABS-MULTI-AGENT-SETUP.txt
 ├── ELEVENLABS-PROMPT-ADDON.txt
 ├── next-env.d.ts
 ├── next.config.ts
 ├── package.json
-├── PROJECT-TREE.txt
 ├── README.md
 ├── tsconfig.json
 └── wordpress-embed.html
