@@ -13,11 +13,14 @@ type DialogueSession = {
   slug: AgentSlug;
   conversation: any;
   speaking: boolean;
+  connected: boolean;
+  armed: boolean;
   lastText: string;
   turnText: string;
   timers: number[];
   packetCursorMs: number;
   turnStartedAt: number | null;
+  audioDeadlineAt: number;
   spokeThisTurn: boolean;
 };
 
@@ -88,9 +91,11 @@ export function DialogueArena({
 
   const sessionsRef = useRef<Map<AgentSlug, DialogueSession>>(new Map());
   const runningRef = useRef(false);
-  const nextSpeakerRef = useRef<AgentSlug | null>(null);
+  const turnOwnerRef = useRef<AgentSlug | null>(null);
+  const queuedTurnRef = useRef<{ slug: AgentSlug; text: string } | null>(null);
   const turnsRef = useRef(0);
   const finalizeTimerRef = useRef<number | null>(null);
+  const responseWatchdogRef = useRef<number | null>(null);
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
 
   const choices = useMemo(() => enabledAgentSlugs.filter((slug) => Boolean(AGENTS[slug])), [enabledAgentSlugs]);
@@ -110,6 +115,7 @@ export function DialogueArena({
     session.lastText = "";
     session.packetCursorMs = 0;
     session.turnStartedAt = null;
+    session.audioDeadlineAt = 0;
     session.spokeThisTurn = false;
   };
 
@@ -137,15 +143,24 @@ export function DialogueArena({
     });
 
     session.packetCursorMs += packetEnd;
+    session.audioDeadlineAt = Math.max(
+      session.audioDeadlineAt,
+      (session.turnStartedAt ?? performance.now()) + session.packetCursorMs,
+    );
   };
 
   const endAllSessions = async () => {
     runningRef.current = false;
     setRunning(false);
-    nextSpeakerRef.current = null;
+    turnOwnerRef.current = null;
+    queuedTurnRef.current = null;
     if (finalizeTimerRef.current !== null) {
       window.clearTimeout(finalizeTimerRef.current);
       finalizeTimerRef.current = null;
+    }
+    if (responseWatchdogRef.current !== null) {
+      window.clearTimeout(responseWatchdogRef.current);
+      responseWatchdogRef.current = null;
     }
     const sessions = Array.from(sessionsRef.current.values());
     sessionsRef.current.clear();
@@ -159,37 +174,123 @@ export function DialogueArena({
 
   useEffect(() => () => { void endAllSessions(); }, []);
 
-  const sendTurn = (slug: AgentSlug, text: string) => {
+  const setOnlySpeakerAudible = async (slug: AgentSlug | null) => {
+    const jobs = Array.from(sessionsRef.current.values()).map(async (session) => {
+      try {
+        await session.conversation.setVolume({ volume: slug === session.slug ? 1 : 0 });
+      } catch (err) {
+        console.warn(`Unable to set dialogue volume for ${session.slug}`, err);
+      }
+    });
+    await Promise.all(jobs);
+  };
+
+  const waitUntilQuiet = async (slug: AgentSlug, timeoutMs = 15000) => {
+    const started = performance.now();
+    while (runningRef.current) {
+      const session = sessionsRef.current.get(slug);
+      if (!session) return false;
+      if (session.connected && !session.speaking) return true;
+      if (performance.now() - started >= timeoutMs) return false;
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+    }
+    return false;
+  };
+
+  const dispatchTurn = async (slug: AgentSlug, text: string) => {
+    if (!runningRef.current) return;
+
+    // There must never be two armed turns. If a relay arrives early, keep only
+    // the next expected turn queued until the current audio has fully drained.
+    if (turnOwnerRef.current !== null) {
+      queuedTurnRef.current = { slug, text };
+      return;
+    }
+
     const session = sessionsRef.current.get(slug);
-    if (!session || !runningRef.current) return;
+    if (!session) return;
+
+    const quiet = await waitUntilQuiet(slug);
+    if (!quiet || !runningRef.current) {
+      setError(`${AGENTS[slug].name} did not become ready for the next turn.`);
+      await endAllSessions();
+      return;
+    }
+
+    // Keep the non-speaking session physically inaudible. Startup greetings or
+    // any stray internal generation therefore cannot overlap the armed speaker.
+    await setOnlySpeakerAudible(null);
     resetLiveTurn(session);
-    nextSpeakerRef.current = slug;
+    session.armed = true;
+    turnOwnerRef.current = slug;
     setStatus(`Waiting for ${AGENTS[slug].shortName}…`);
+    await setOnlySpeakerAudible(slug);
+
+    if (!runningRef.current || turnOwnerRef.current !== slug) return;
     session.conversation.sendUserMessage(text);
+
+    if (responseWatchdogRef.current !== null) window.clearTimeout(responseWatchdogRef.current);
+    responseWatchdogRef.current = window.setTimeout(() => {
+      const current = sessionsRef.current.get(slug);
+      if (!runningRef.current || turnOwnerRef.current !== slug || current?.spokeThisTurn) return;
+      setError(`${AGENTS[slug].name} received the turn but did not begin speaking within 20 seconds.`);
+      void endAllSessions();
+    }, 20000);
+  };
+
+  const sendTurn = (slug: AgentSlug, text: string) => {
+    void dispatchTurn(slug, text);
   };
 
   const finalizeSpeakerTurn = (slug: AgentSlug) => {
-    if (!runningRef.current) return;
+    if (!runningRef.current || turnOwnerRef.current !== slug) return;
     const session = sessionsRef.current.get(slug);
-    if (!session || !session.spokeThisTurn) return;
+    if (!session || !session.armed || !session.spokeThisTurn) return;
 
     if (finalizeTimerRef.current !== null) window.clearTimeout(finalizeTimerRef.current);
+
+    // onModeChange can report listening before the browser has finished playing
+    // buffered TTS audio. Audio alignment gives us the real playback horizon.
+    const waitForAudioMs = Math.max(0, session.audioDeadlineAt - performance.now()) + 350;
     finalizeTimerRef.current = window.setTimeout(() => {
       finalizeTimerRef.current = null;
-      if (!runningRef.current) return;
+      if (!runningRef.current || turnOwnerRef.current !== slug) return;
       const current = sessionsRef.current.get(slug);
-      if (!current || current.speaking) return;
+      if (!current || current.speaking) {
+        finalizeSpeakerTurn(slug);
+        return;
+      }
+
+      // More alignment packets can arrive after the mode flips out of speaking.
+      // Re-check the playback horizon here so a late packet extends the silence gate.
+      const remainingAudioMs = current.audioDeadlineAt - performance.now();
+      if (remainingAudioMs > 40) {
+        finalizeTimerRef.current = window.setTimeout(
+          () => finalizeSpeakerTurn(slug),
+          remainingAudioMs + 350,
+        );
+        return;
+      }
+
       const finalText = (current.lastText || current.turnText).trim();
       if (!finalText) {
-        setError(`No completed response was received from ${AGENTS[slug].name}.`);
-        void endAllSessions();
+        // The final text callback can trail the final audio event slightly.
+        finalizeTimerRef.current = window.setTimeout(() => finalizeSpeakerTurn(slug), 400);
         return;
+      }
+
+      if (responseWatchdogRef.current !== null) {
+        window.clearTimeout(responseWatchdogRef.current);
+        responseWatchdogRef.current = null;
       }
 
       clearSessionTimers(current);
       setTranscript((prev) => [...prev, { slug, text: finalText }]);
       setLiveLine(null);
       current.turnText = finalText;
+      current.armed = false;
+      turnOwnerRef.current = null;
+      void setOnlySpeakerAudible(null);
 
       const completed = turnsRef.current + 1;
       turnsRef.current = completed;
@@ -205,8 +306,17 @@ export function DialogueArena({
         `The other historical speaker just said:\n\n“${finalText}”\n\n` +
         "Respond directly to the argument they made from your own historical perspective. " +
         "Do not greet or address a museum visitor. Continue the discussion naturally and keep this turn concise.";
-      window.setTimeout(() => sendTurn(other, relay), 250);
-    }, 500);
+
+      // The current turn is now fully closed. Dispatch the next one only after a
+      // short clean silence; if another turn was queued, the expected relay wins.
+      queuedTurnRef.current = { slug: other, text: relay };
+      window.setTimeout(() => {
+        if (!runningRef.current || turnOwnerRef.current !== null) return;
+        const queued = queuedTurnRef.current;
+        queuedTurnRef.current = null;
+        if (queued) void dispatchTurn(queued.slug, queued.text);
+      }, 450);
+    }, waitForAudioMs);
   };
 
   const startOneSession = async (slug: AgentSlug) => {
@@ -218,23 +328,33 @@ export function DialogueArena({
       slug,
       conversation: null,
       speaking: false,
+      connected: false,
+      armed: false,
       lastText: "",
       turnText: "",
       timers: [],
       packetCursorMs: 0,
       turnStartedAt: null,
+      audioDeadlineAt: 0,
       spokeThisTurn: false,
     };
 
     const conversation = await Conversation.startSession({
       conversationToken: data.token,
-      onConnect: () => setStatus(`Connected ${AGENTS[slug].shortName}.`),
+      onConnect: () => {
+        holder.connected = true;
+        setStatus(`Connected ${AGENTS[slug].shortName}.`);
+      },
       onDisconnect: () => {
+        holder.connected = false;
         if (runningRef.current) setError(`${AGENTS[slug].name} disconnected during the discussion.`);
       },
       onModeChange: (event: unknown) => {
         const speaking = modeIsSpeaking(event);
         holder.speaking = speaking;
+        // Ignore any unsolicited startup speech from an unarmed dialogue session.
+        // Its volume is kept at zero until the orchestrator explicitly gives it a turn.
+        if (!holder.armed || turnOwnerRef.current !== slug) return;
         if (speaking) {
           holder.spokeThisTurn = true;
           setActiveSpeaker(slug);
@@ -242,15 +362,19 @@ export function DialogueArena({
           return;
         }
         if (holder.spokeThisTurn) {
-          setStatus(`${AGENTS[slug].shortName} finished. Preparing the next turn…`);
+          setStatus(`${AGENTS[slug].shortName} finished. Waiting for audio to clear…`);
           finalizeSpeakerTurn(slug);
         }
       },
       onMessage: (event: unknown) => {
+        if (!holder.armed || turnOwnerRef.current !== slug) return;
         const text = extractAgentText(event);
         if (text) holder.lastText = text;
       },
-      onAudioAlignment: (payload: unknown) => appendLiveAlignment(holder, payload),
+      onAudioAlignment: (payload: unknown) => {
+        if (!holder.armed || turnOwnerRef.current !== slug) return;
+        appendLiveAlignment(holder, payload);
+      },
       onError: (err: unknown) => {
         console.error(`Dialogue session error for ${slug}`, err);
         setError(`${AGENTS[slug].name} encountered an ElevenLabs session error.`);
@@ -259,7 +383,9 @@ export function DialogueArena({
 
     holder.conversation = conversation;
     conversation.setMicMuted(true);
-    try { await conversation.setVolume({ volume: 1 }); } catch { /* older SDK variants may be sync */ }
+    // Every dialogue session starts silent. The turn mutex raises volume only for
+    // the session that has explicitly been armed to speak.
+    try { await conversation.setVolume({ volume: 0 }); } catch { /* older SDK variants may be sync */ }
     sessionsRef.current.set(slug, holder);
   };
 
