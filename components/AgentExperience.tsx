@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
-import { ConversationProvider, useConversation } from "@elevenlabs/react";
-import { SecondaryDialogueSession, type DialogueCommand } from "@/components/SecondaryDialogueSession";
+import { useConversation } from "@elevenlabs/react";
+import { SecondaryDialogueSession, type DialogueCommand, type SecondaryDialogueStatus } from "@/components/SecondaryDialogueSession";
 import {
   AGENTS,
   getPublicAgent,
@@ -164,6 +164,7 @@ export function AgentExperience({
   const [dialogueTurnsCompleted, setDialogueTurnsCompleted] = useState(0);
   const [dialogueSecondaryReady, setDialogueSecondaryReady] = useState(false);
   const [dialogueSecondarySpeaking, setDialogueSecondarySpeaking] = useState(false);
+  const [dialogueSecondaryStatus, setDialogueSecondaryStatus] = useState<SecondaryDialogueStatus | null>(null);
   const [dialogueSpeakerSlug, setDialogueSpeakerSlug] = useState<AgentSlug | null>(null);
   const [dialogueCommand, setDialogueCommand] = useState<DialogueCommand | null>(null);
 
@@ -404,6 +405,7 @@ export function AgentExperience({
       setDialoguePair(null);
       setDialogueSecondaryReady(false);
       setDialogueSecondarySpeaking(false);
+      setDialogueSecondaryStatus(null);
       setDialogueSpeakerSlug(null);
       setDialogueCommand(null);
       setScreen((current) => (current === "error" ? current : "finished"));
@@ -486,6 +488,7 @@ export function AgentExperience({
       setDialoguePair(null);
       setDialogueSecondaryReady(false);
       setDialogueSecondarySpeaking(false);
+      setDialogueSecondaryStatus(null);
       setDialogueSpeakerSlug(null);
       setDialogueCommand(null);
       resetAlignmentStream(false);
@@ -516,6 +519,7 @@ export function AgentExperience({
     setDialoguePair(null);
     setDialogueSecondaryReady(false);
     setDialogueSecondarySpeaking(false);
+    setDialogueSecondaryStatus(null);
     setDialogueSpeakerSlug(null);
     setDialogueCommand(null);
 
@@ -543,6 +547,7 @@ export function AgentExperience({
     setDialoguePair(null);
     setDialogueSecondaryReady(false);
     setDialogueSecondarySpeaking(false);
+    setDialogueSecondaryStatus(null);
     setDialogueSpeakerSlug(null);
     setDialogueCommand(null);
     setPendingTransferSlug(null);
@@ -586,6 +591,7 @@ export function AgentExperience({
     setDialogueTurnsCompleted(0);
     setDialogueSecondaryReady(false);
     setDialogueSecondarySpeaking(false);
+    setDialogueSecondaryStatus(null);
     setDialogueSpeakerSlug(null);
     setDialogueCommand(null);
     resetSessionRefs();
@@ -717,6 +723,7 @@ export function AgentExperience({
     setDialogueTurnsCompleted(0);
     setDialogueSecondaryReady(false);
     setDialogueSecondarySpeaking(false);
+    setDialogueSecondaryStatus(null);
     setDialogueSpeakerSlug(null);
     setDialogueCommand(null);
     resetAlignmentStream(true);
@@ -763,6 +770,7 @@ export function AgentExperience({
     setDialogueTurnsCompleted(0);
     setDialogueSecondaryReady(false);
     setDialogueSecondarySpeaking(false);
+    setDialogueSecondaryStatus(null);
     setDialogueSpeakerSlug(first);
     setDialogueCommand(null);
     conversation.setMuted(true);
@@ -807,6 +815,10 @@ export function AgentExperience({
 
   const handleSecondaryReady = useCallback((ready: boolean) => {
     setDialogueSecondaryReady(ready);
+  }, []);
+
+  const handleSecondaryStatus = useCallback((status: SecondaryDialogueStatus) => {
+    setDialogueSecondaryStatus(status);
   }, []);
 
   const handleSecondaryAlignment = useCallback((payload: unknown) => {
@@ -1311,7 +1323,11 @@ export function AgentExperience({
                     </>
                   ) : (
                     <div className="ai-dialogue-running">
-                      <p>{dialogueSecondaryReady ? `Turn ${Math.min(dialogueTurnsCompleted + 1, aiDialogueMaxTurns)} of ${aiDialogueMaxTurns}.` : "Connecting the second historical figure…"} You can stop the exchange at any time.</p>
+                      <p>{dialogueSecondaryReady
+                        ? `Turn ${Math.min(dialogueTurnsCompleted + 1, aiDialogueMaxTurns)} of ${aiDialogueMaxTurns}.`
+                        : dialogueSecondaryStatus
+                          ? `Second session: ${dialogueSecondaryStatus.replaceAll("-", " ")}…`
+                          : "Connecting the second historical figure…"} You can stop the exchange at any time.</p>
                       <button type="button" className="secondary-button" onClick={stopAiDialogue}>Stop AI dialogue</button>
                     </div>
                   )}
@@ -1444,17 +1460,16 @@ export function AgentExperience({
       </div>
 
       {dialogueActive && dialoguePair && (
-        <ConversationProvider>
-          <SecondaryDialogueSession
-            slug={dialoguePair[1]}
-            command={dialogueCommand}
-            onReady={handleSecondaryReady}
-            onSpeakingChange={handleSecondarySpeakingChange}
-            onAlignment={handleSecondaryAlignment}
-            onFinalResponse={handleSecondaryFinalResponse}
-            onError={handleSecondaryError}
-          />
-        </ConversationProvider>
+        <SecondaryDialogueSession
+          slug={dialoguePair[1]}
+          command={dialogueCommand}
+          onReady={handleSecondaryReady}
+          onSpeakingChange={handleSecondarySpeakingChange}
+          onAlignment={handleSecondaryAlignment}
+          onFinalResponse={handleSecondaryFinalResponse}
+          onStatus={handleSecondaryStatus}
+          onError={handleSecondaryError}
+        />
       )}
     </main>
   );

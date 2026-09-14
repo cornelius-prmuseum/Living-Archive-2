@@ -52,3 +52,7 @@ Behavior
 - The turn limit prevents runaway autonomous conversations.
 - Near the 10-minute session limit, dialogue mode stops between voice turns rather
   than cutting off a speaker.
+
+
+v4.5.3 NOTE
+The secondary dialogue participant now uses the direct ElevenLabs JavaScript Conversation.startSession API, outside the primary React ConversationProvider. This guarantees a genuinely independent second session and adds visible lifecycle status (fetching token, connecting, warming up, ready, relay sent, speaking).
