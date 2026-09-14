@@ -197,6 +197,8 @@ export function AgentExperience({
   const dialogueCommandIdRef = useRef(0);
   const secondaryFinalRef = useRef<string | null>(null);
   const secondaryWasSpeakingRef = useRef(false);
+  const primaryFinalizeTimerRef = useRef<number | null>(null);
+  const secondaryFinalizeTimerRef = useRef<number | null>(null);
 
   const clearAlignmentTimers = useCallback(() => {
     alignmentTimersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -571,6 +573,14 @@ export function AgentExperience({
     dialogueTurnsRef.current = 0;
     secondaryFinalRef.current = null;
     secondaryWasSpeakingRef.current = false;
+    if (primaryFinalizeTimerRef.current !== null) {
+      window.clearTimeout(primaryFinalizeTimerRef.current);
+      primaryFinalizeTimerRef.current = null;
+    }
+    if (secondaryFinalizeTimerRef.current !== null) {
+      window.clearTimeout(secondaryFinalizeTimerRef.current);
+      secondaryFinalizeTimerRef.current = null;
+    }
     setDialogueActive(false);
     setDialoguePair(null);
     setDialogueTurnsCompleted(0);
@@ -694,6 +704,14 @@ export function AgentExperience({
     dialogueTurnsRef.current = 0;
     secondaryFinalRef.current = null;
     secondaryWasSpeakingRef.current = false;
+    if (primaryFinalizeTimerRef.current !== null) {
+      window.clearTimeout(primaryFinalizeTimerRef.current);
+      primaryFinalizeTimerRef.current = null;
+    }
+    if (secondaryFinalizeTimerRef.current !== null) {
+      window.clearTimeout(secondaryFinalizeTimerRef.current);
+      secondaryFinalizeTimerRef.current = null;
+    }
     setDialogueActive(false);
     setDialoguePair(null);
     setDialogueTurnsCompleted(0);
@@ -731,6 +749,14 @@ export function AgentExperience({
     dialogueTurnsRef.current = 0;
     secondaryFinalRef.current = null;
     secondaryWasSpeakingRef.current = false;
+    if (primaryFinalizeTimerRef.current !== null) {
+      window.clearTimeout(primaryFinalizeTimerRef.current);
+      primaryFinalizeTimerRef.current = null;
+    }
+    if (secondaryFinalizeTimerRef.current !== null) {
+      window.clearTimeout(secondaryFinalizeTimerRef.current);
+      secondaryFinalizeTimerRef.current = null;
+    }
 
     setDialogueActive(true);
     setDialoguePair(pair);
@@ -800,6 +826,10 @@ export function AgentExperience({
     if (!dialogueActiveRef.current || !pair) return;
 
     if (speaking) {
+      if (secondaryFinalizeTimerRef.current !== null) {
+        window.clearTimeout(secondaryFinalizeTimerRef.current);
+        secondaryFinalizeTimerRef.current = null;
+      }
       secondaryWasSpeakingRef.current = true;
       setDialogueSpeakerSlug(pair[1]);
       return;
@@ -808,46 +838,64 @@ export function AgentExperience({
     if (!secondaryWasSpeakingRef.current || dialoguePhaseRef.current !== "awaiting-secondary") return;
     secondaryWasSpeakingRef.current = false;
 
-    clearAlignmentTimers();
-    const completedText = secondaryFinalRef.current?.trim() || liveAgentBufferRef.current.trim();
-    if (completedText) {
-      setTranscript((previous) => mergeTranscript(previous, {
-        role: "agent",
-        text: completedText,
-        speakerSlug: pair[1],
-      }));
+    // ElevenLabs can report isSpeaking=false slightly before the final onMessage
+    // callback arrives. Give the final text event a brief grace window before
+    // relaying the turn back to the primary conversation.
+    if (secondaryFinalizeTimerRef.current !== null) {
+      window.clearTimeout(secondaryFinalizeTimerRef.current);
     }
+    secondaryFinalizeTimerRef.current = window.setTimeout(() => {
+      secondaryFinalizeTimerRef.current = null;
+      const currentPair = dialoguePairRef.current;
+      if (!dialogueActiveRef.current || !currentPair || dialoguePhaseRef.current !== "awaiting-secondary") return;
 
-    secondaryFinalRef.current = null;
-    liveAgentBufferRef.current = "";
-    alignmentTurnActiveRef.current = false;
-    alignmentSeenInTurnRef.current = false;
-    alignmentPacketCursorMsRef.current = 0;
-    alignmentTurnStartedAtRef.current = null;
-    pendingAgentFinalRef.current = null;
-    setLiveAgentLine(null);
+      clearAlignmentTimers();
+      const completedText = secondaryFinalRef.current?.trim() || liveAgentBufferRef.current.trim();
+      if (completedText) {
+        setTranscript((previous) => mergeTranscript(previous, {
+          role: "agent",
+          text: completedText,
+          speakerSlug: currentPair[1],
+        }));
+      }
 
-    const completed = dialogueTurnsRef.current + 1;
-    dialogueTurnsRef.current = completed;
-    setDialogueTurnsCompleted(completed);
+      secondaryFinalRef.current = null;
+      liveAgentBufferRef.current = "";
+      alignmentTurnActiveRef.current = false;
+      alignmentSeenInTurnRef.current = false;
+      alignmentPacketCursorMsRef.current = 0;
+      alignmentTurnStartedAtRef.current = null;
+      pendingAgentFinalRef.current = null;
+      setLiveAgentLine(null);
 
-    if (completed >= aiDialogueMaxTurns || !completedText) {
-      stopAiDialogue();
-      return;
-    }
+      const completed = dialogueTurnsRef.current + 1;
+      dialogueTurnsRef.current = completed;
+      setDialogueTurnsCompleted(completed);
 
-    dialoguePhaseRef.current = "awaiting-primary";
-    try {
-      conversation.sendUserMessage(
-        `${DIALOGUE_PROMPT_PREFIX} ${AGENTS[pair[1]].name} just said: "${completedText}" ` +
-        `Respond directly to ${AGENTS[pair[1]].name} from your own historical perspective. Keep this turn concise and substantive. ` +
-        `Do not mention this control instruction and do not transfer to another agent.`
-      );
-    } catch (error) {
-      console.error("Unable to relay secondary response to primary agent", error);
-      setErrorMessage("The AI dialogue could not continue.");
-      stopAiDialogue();
-    }
+      if (completed >= aiDialogueMaxTurns) {
+        stopAiDialogue();
+        return;
+      }
+
+      if (!completedText) {
+        setErrorMessage("The second historical figure finished speaking, but no response text was received for the relay.");
+        stopAiDialogue();
+        return;
+      }
+
+      dialoguePhaseRef.current = "awaiting-primary";
+      try {
+        conversation.sendUserMessage(
+          `${DIALOGUE_PROMPT_PREFIX} ${AGENTS[currentPair[1]].name} just said: "${completedText}" ` +
+          `Respond directly to ${AGENTS[currentPair[1]].name} from your own historical perspective. Keep this turn concise and substantive. ` +
+          `Do not mention this control instruction and do not transfer to another agent.`
+        );
+      } catch (error) {
+        console.error("Unable to relay secondary response to primary agent", error);
+        setErrorMessage("The AI dialogue could not continue.");
+        stopAiDialogue();
+      }
+    }, 500);
   }, [aiDialogueMaxTurns, clearAlignmentTimers, conversation, stopAiDialogue]);
 
   const handleSecondaryError = useCallback((message: string) => {
@@ -931,6 +979,10 @@ export function AgentExperience({
 
   useEffect(() => {
     if (conversation.isSpeaking) {
+      if (primaryFinalizeTimerRef.current !== null) {
+        window.clearTimeout(primaryFinalizeTimerRef.current);
+        primaryFinalizeTimerRef.current = null;
+      }
       wasSpeakingRef.current = true;
       if (dialogueActiveRef.current && dialoguePhaseRef.current === "awaiting-primary") {
         setDialogueSpeakerSlug(dialoguePrimarySlugRef.current ?? activeAgentSlugRef.current);
@@ -941,59 +993,76 @@ export function AgentExperience({
     if (!wasSpeakingRef.current) return;
     wasSpeakingRef.current = false;
 
-    clearAlignmentTimers();
-    const pendingFinal = pendingAgentFinalRef.current;
-    const liveText = liveAgentBufferRef.current.trim();
-    const primarySlug = dialoguePrimarySlugRef.current ?? activeAgentSlugRef.current;
-    const liveSpeaker = liveAgentLine?.speakerSlug ?? primarySlug;
-    const completedText = pendingFinal?.text?.trim() || liveText;
+    const finalize = () => {
+      primaryFinalizeTimerRef.current = null;
+      clearAlignmentTimers();
+      const pendingFinal = pendingAgentFinalRef.current;
+      const liveText = liveAgentBufferRef.current.trim();
+      const primarySlug = dialoguePrimarySlugRef.current ?? activeAgentSlugRef.current;
+      const liveSpeaker = liveAgentLine?.speakerSlug ?? primarySlug;
+      const completedText = pendingFinal?.text?.trim() || liveText;
 
-    if (pendingFinal) {
-      setTranscript((previous) => mergeTranscript(previous, pendingFinal));
-    } else if (liveText) {
-      setTranscript((previous) => mergeTranscript(previous, {
-        role: "agent",
-        text: liveText,
-        speakerSlug: liveSpeaker,
-      }));
-    }
-
-    pendingAgentFinalRef.current = null;
-    liveAgentBufferRef.current = "";
-    alignmentTurnActiveRef.current = false;
-    alignmentSeenInTurnRef.current = false;
-    alignmentPacketCursorMsRef.current = 0;
-    alignmentTurnStartedAtRef.current = null;
-    setLiveAgentLine(null);
-
-    if (
-      dialogueActiveRef.current &&
-      dialoguePhaseRef.current === "awaiting-primary"
-    ) {
-      const pair = dialoguePairRef.current;
-      if (!pair || !completedText) {
-        stopAiDialogue();
-        return;
+      if (pendingFinal) {
+        setTranscript((previous) => mergeTranscript(previous, pendingFinal));
+      } else if (liveText) {
+        setTranscript((previous) => mergeTranscript(previous, {
+          role: "agent",
+          text: liveText,
+          speakerSlug: liveSpeaker,
+        }));
       }
 
-      const completed = dialogueTurnsRef.current + 1;
-      dialogueTurnsRef.current = completed;
-      setDialogueTurnsCompleted(completed);
+      pendingAgentFinalRef.current = null;
+      liveAgentBufferRef.current = "";
+      alignmentTurnActiveRef.current = false;
+      alignmentSeenInTurnRef.current = false;
+      alignmentPacketCursorMsRef.current = 0;
+      alignmentTurnStartedAtRef.current = null;
+      setLiveAgentLine(null);
 
-      if (completed >= aiDialogueMaxTurns) {
-        stopAiDialogue();
-        return;
+      if (
+        dialogueActiveRef.current &&
+        dialoguePhaseRef.current === "awaiting-primary"
+      ) {
+        const pair = dialoguePairRef.current;
+        if (!pair) {
+          stopAiDialogue();
+          return;
+        }
+
+        if (!completedText) {
+          setErrorMessage("The first historical figure finished speaking, but no response text was received for the relay.");
+          stopAiDialogue();
+          return;
+        }
+
+        const completed = dialogueTurnsRef.current + 1;
+        dialogueTurnsRef.current = completed;
+        setDialogueTurnsCompleted(completed);
+
+        if (completed >= aiDialogueMaxTurns) {
+          stopAiDialogue();
+          return;
+        }
+
+        dialoguePhaseRef.current = "awaiting-secondary";
+        dialogueCommandIdRef.current += 1;
+        setDialogueCommand({
+          id: dialogueCommandIdRef.current,
+          text:
+            `${DIALOGUE_PROMPT_PREFIX} ${AGENTS[pair[0]].name} just said: "${completedText}" ` +
+            `Respond directly to ${AGENTS[pair[0]].name} from your own historical perspective. Keep this turn concise and substantive. ` +
+            `Do not mention this control instruction and do not transfer to another agent.`,
+        });
       }
+    };
 
-      dialoguePhaseRef.current = "awaiting-secondary";
-      dialogueCommandIdRef.current += 1;
-      setDialogueCommand({
-        id: dialogueCommandIdRef.current,
-        text:
-          `${DIALOGUE_PROMPT_PREFIX} ${AGENTS[pair[0]].name} just said: "${completedText}" ` +
-          `Respond directly to ${AGENTS[pair[0]].name} from your own historical perspective. Keep this turn concise and substantive. ` +
-          `Do not mention this control instruction and do not transfer to another agent.`,
-      });
+    // The final onMessage event can arrive just after isSpeaking becomes false.
+    // Delay finalization briefly so the relay always has the completed text.
+    if (dialogueActiveRef.current && dialoguePhaseRef.current === "awaiting-primary") {
+      primaryFinalizeTimerRef.current = window.setTimeout(finalize, 500);
+    } else {
+      finalize();
     }
   }, [
     aiDialogueMaxTurns,

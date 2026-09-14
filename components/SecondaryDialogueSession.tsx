@@ -18,7 +18,7 @@ function extractAgentText(event: unknown): string | null {
   if (!text) return null;
 
   const source = String(e.source ?? e.role ?? e.type ?? "").toLowerCase();
-  const isAgent = Boolean(nested) || source.includes("agent") || source.includes("assistant");
+  const isAgent = Boolean(nested) || source === "ai" || source.includes("agent") || source.includes("assistant");
   return isAgent ? text.trim() : null;
 }
 
@@ -44,6 +44,8 @@ export function SecondaryDialogueSession({
   const armedRef = useRef(false);
   const lastCommandIdRef = useRef<number | null>(null);
   const readyTimerRef = useRef<number | null>(null);
+  const responseWatchdogRef = useRef<number | null>(null);
+  const speakingRef = useRef(false);
 
   const conversation = useConversation({
     micMuted: true,
@@ -101,6 +103,7 @@ export function SecondaryDialogueSession({
     return () => {
       cancelled = true;
       if (readyTimerRef.current !== null) window.clearTimeout(readyTimerRef.current);
+      if (responseWatchdogRef.current !== null) window.clearTimeout(responseWatchdogRef.current);
       conversation.endSession();
     };
     // slug intentionally defines the lifetime of this independent session.
@@ -108,6 +111,11 @@ export function SecondaryDialogueSession({
   }, [slug]);
 
   useEffect(() => {
+    speakingRef.current = conversation.isSpeaking;
+    if (conversation.isSpeaking && responseWatchdogRef.current !== null) {
+      window.clearTimeout(responseWatchdogRef.current);
+      responseWatchdogRef.current = null;
+    }
     onSpeakingChange(armedRef.current && conversation.isSpeaking);
   }, [conversation.isSpeaking, onSpeakingChange]);
 
@@ -150,6 +158,18 @@ export function SecondaryDialogueSession({
         await conversation.setVolume({ volume: 1 });
         conversation.setMuted(true);
         conversation.sendUserMessage(commandText);
+
+        if (responseWatchdogRef.current !== null) {
+          window.clearTimeout(responseWatchdogRef.current);
+        }
+        responseWatchdogRef.current = window.setTimeout(() => {
+          responseWatchdogRef.current = null;
+          if (!speakingRef.current) {
+            onError(
+              "The second historical figure received the relay message but did not begin speaking. Check ElevenLabs concurrency and that this agent can respond to text messages.",
+            );
+          }
+        }, 10_000);
       } catch (error) {
         console.error("Unable to send AI dialogue relay to secondary agent", error);
         onError("The AI dialogue could not send the next turn to the second historical figure.");
