@@ -1,117 +1,24 @@
-PRMuseum / Living Archives — Native ElevenLabs Visitor Transfer Setup
-=====================================================================
+PRMuseum Living Archives — ElevenLabs visitor transfer setup (v5.10)
 
-This setup is for the NORMAL VISITOR agents only:
-- Edward Bernays
-- Ivy Lee
-- Walter Lippmann
-- Arthur W. Page
+Use the native Transfer to AI Agent / transfer_to_agent system tool on the FOUR NORMAL VISITOR AGENTS ONLY.
+Do not use transfer_to_agent on the dedicated AI Discussion copies.
 
-AI-to-AI Discussion uses separate Dialogue copies and must NOT use transfer_to_agent.
-
-HOW VISITOR SWITCHING WORKS
----------------------------
-There is now one transfer path for BOTH behaviors:
-
-1. The visitor says or types: "I'd like to speak with Ivy Lee."
-2. OR the visitor clicks Ivy Lee's portrait in Living Archives.
-   The website adds that same sentence as a normal Visitor transcript entry and
-   sends it to the current ElevenLabs conversation.
-3. The active agent calls ElevenLabs' native transfer_to_agent system tool.
-4. ElevenLabs preserves the conversation history and changes to the destination agent.
-5. Living Archives observes the successful transfer event and only then changes
-   the portrait/name to the new historical figure.
-
-ELEVENLABS TOOL
----------------
-On EACH normal visitor agent, add:
-Tool: Transfer to AI Agent (transfer_to_agent)
-
-Recommended tool description:
-"Transfer the conversation only when the visitor explicitly asks to speak with,
-switch to, or be transferred to another available historical figure. A request
-may come from spoken conversation, typed conversation, or the museum interface.
-Do not transfer merely because another figure is mentioned, discussed, quoted,
-compared, or relevant to the question. When the visitor explicitly requests a
-different historical figure, transfer promptly to that figure."
-
-TRANSFER RULES
---------------
-Each agent needs a rule for each of the OTHER three visitor agents.
-
-Recommended settings for every rule:
+RECOMMENDED TRANSFER EXPERIENCE
+- Transfer Message: LEAVE BLANK
 - Delay before transfer: 0 ms
-- Transfer Message: use a short target-specific handoff line
-- Enable First Message: OFF
+- Enable First Message: ON
 
-Examples of Transfer Message:
-- To Ivy Lee: "Certainly. Let me bring Ivy Lee into the conversation."
-- To Edward Bernays: "Certainly. Let me bring Edward Bernays into the conversation."
-- To Walter Lippmann: "Certainly. Let me bring Walter Lippmann into the conversation."
-- To Arthur W. Page: "Certainly. Let me bring Arthur Page into the conversation."
+Why: a blank transfer message avoids a handoff sentence being synthesized in the receiving agent's voice. Enabling the transferred agent's First Message removes dead air after the handoff and makes the new identity unmistakable.
 
-Keeping Enable First Message OFF prevents the destination agent from replaying
-its normal introduction in the middle of an existing conversation. The full
-conversation history is already preserved by ElevenLabs.
+FIRST MESSAGES
+Edward Bernays: "Edward Bernays here. What would you like to discuss?"
+Ivy Lee: "Ivy Lee here. What would you like to discuss?"
+Walter Lippmann: "Walter Lippmann here. What would you like to discuss?"
+Arthur W. Page: "Arthur Page here. What would you like to discuss?"
 
-Condition template:
-"Transfer to [TARGET NAME] only when the visitor explicitly asks to speak with
-[TARGET NAME], switch to [TARGET NAME], be transferred to [TARGET NAME], or
-otherwise clearly requests that [TARGET NAME] become the current speaker. Do
-not transfer merely because [TARGET NAME] is mentioned, discussed, quoted,
-compared, or asked about."
+These messages should work both when the figure starts a fresh conversation and when they receive a transfer.
 
-REQUIRED ROUTES
----------------
-Bernays -> Ivy Lee
-Bernays -> Walter Lippmann
-Bernays -> Arthur W. Page
-
-Ivy Lee -> Bernays
-Ivy Lee -> Walter Lippmann
-Ivy Lee -> Arthur W. Page
-
-Walter Lippmann -> Bernays
-Walter Lippmann -> Ivy Lee
-Walter Lippmann -> Arthur W. Page
-
-Arthur W. Page -> Bernays
-Arthur W. Page -> Ivy Lee
-Arthur W. Page -> Walter Lippmann
-
-NORMAL FIRST MESSAGE
---------------------
-Keep each normal visitor agent's regular First Message configured. It will play
-when that historical figure is the INITIAL agent for a new conversation.
-
-Because Enable First Message is OFF on the transfer rules, it will NOT replay
-when the figure receives a transferred conversation.
-
-PROMPT ADDITION
----------------
-Add this to every normal visitor agent prompt:
-
-"If the visitor explicitly asks to speak with another available historical
-figure, use transfer_to_agent for that figure. Do not imitate the requested
-figure or answer on their behalf. Do not transfer merely because another figure
-is mentioned, discussed, quoted, compared, or relevant. After receiving a
-transferred conversation, continue naturally from the preserved conversation
-history. Do not restart the interview or reintroduce yourself unless the visitor
-asks you to."
-
-LEGACY CLIENT TOOLS
--------------------
-Remove these from the normal visitor agents when convenient:
-- syncActiveAgent
-- setActiveAgent
-
-Living Archives no longer uses them for identity changes. v5.7 includes harmless
-no-op compatibility handlers so an old agent configuration containing one of
-these tools will not crash the browser conversation while you clean them up.
-
-CLIENT EVENTS
--------------
-Recommended on every possible STARTING visitor agent:
+CLIENT EVENTS — ENABLE ON THE NORMAL VISITOR AGENTS
 - audio
 - user_transcript
 - agent_response
@@ -119,22 +26,34 @@ Recommended on every possible STARTING visitor agent:
 - agent_tool_response
 - agent_response_complete
 
-The parent agent's Client Events are inherited by the transferred agent.
+The site requires agent_tool_request and agent_tool_response to switch the portrait at the real native transfer boundary. The parent agent's client-event configuration is inherited during an agent transfer, but for consistency configure the same set on all four visitor agents.
 
-API KEY / PERMISSIONS
----------------------
-Living Archives maps ElevenLabs' zero-indexed transfer destination back to the
-correct PRMuseum portrait by reading the source agent's transfer configuration.
-Keep these API permissions enabled on the Vercel ELEVENLABS_API_KEY:
-- Conversational AI / Agents: Write (needed for conversation-token creation in
-  the existing app setup)
-- Conversational AI / Agents: Read (needed to resolve transfer destinations)
+TRANSFER TOOL DESCRIPTION
+Transfer the visitor only when the MOST RECENT NEW visitor utterance received while you are the active agent explicitly asks to speak with, talk to, switch to, or be transferred to a DIFFERENT available historical figure.
 
-Also ensure the ElevenLabs account configuring each transfer has at least viewer
-access to every destination agent.
+A transfer request can be spoken, typed, or generated by the museum interface and should be treated identically.
 
-IMPORTANT
----------
-Do NOT configure transfer_to_agent on the separate Dialogue-agent copies used
-for AI-to-AI Discussion. Those sessions are orchestrated independently by the
-website and never use native agent transfer for turn-taking.
+Never transfer because of an older request preserved in conversation history. If an earlier request asked to speak with YOU, that request has already been fulfilled because you are now the active speaker.
+
+Do not transfer merely because another figure is mentioned, discussed, quoted, compared, criticized, praised, or relevant. Never transfer based on another agent's First Message or handoff language.
+
+DESTINATION CONDITION TEMPLATE
+Transfer to [TARGET] ONLY when the MOST RECENT NEW visitor utterance, received while [CURRENT AGENT] is the active speaker, explicitly asks to speak with [TARGET], talk to [TARGET], switch to [TARGET], or be transferred to [TARGET].
+
+Do not use older messages from before [CURRENT AGENT] became active as a transfer trigger. A prior request to speak with [CURRENT AGENT] is already fulfilled. Do not transfer merely because [TARGET] is mentioned or discussed.
+
+PROMPT GUARD TO ADD TO EACH VISITOR AGENT
+[AGENT TRANSFER SAFETY]
+You are [YOUR NAME].
+The full conversation history may contain a visitor request that caused a transfer to you. If an earlier message says the visitor wants to speak with you, that request is ALREADY FULFILLED because you are now the requested person. Never transfer away in response to that historical request.
+
+Only use transfer_to_agent when the MOST RECENT NEW visitor utterance received while you are already the active speaker explicitly asks to speak with a DIFFERENT available historical figure. Never transfer based on another agent's message, your First Message, or an older visitor request.
+
+
+v5.10 UI identity note
+-----------------------
+Living Archives now uses the visitor's explicit transfer request as the immediate
+UI destination hint, then confirms it against ElevenLabs' transfer_to_agent
+configuration. This removes the race where the receiving agent could begin
+speaking before the async agent_number lookup finished. Audio alignment also
+respects the in-flight transfer speaker instead of forcing the outgoing agent.

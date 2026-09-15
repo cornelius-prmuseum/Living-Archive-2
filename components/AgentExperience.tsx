@@ -100,6 +100,41 @@ function normalizeMessage(event: unknown, activeSpeaker: AgentSlug): TranscriptE
   };
 }
 
+
+function inferRequestedTransferSlug(
+  text: string,
+  currentSlug: AgentSlug,
+  enabledSlugs: readonly AgentSlug[],
+): AgentSlug | null {
+  const lower = text.toLowerCase().replace(/[’]/g, "'");
+  const transferIntent = /\b(transfer|speak|talk|switch|connect|put me through|bring)\b/.test(lower);
+  if (!transferIntent) return null;
+
+  const aliases: Record<AgentSlug, readonly string[]> = {
+    bernays: ["edward bernays", "bernays"],
+    "ivy-lee": ["ivy lee", "ivy", "mr. lee", "lee"],
+    lippmann: ["walter lippmann", "lippmann"],
+    "arthur-page": ["arthur w. page", "arthur page", "mr. page", "page"],
+  };
+
+  const candidates = enabledSlugs.filter((slug) => slug !== currentSlug);
+
+  // Prefer names that appear as the object of a transfer/speaking phrase. This
+  // avoids choosing the current speaker when a sentence mentions both people.
+  for (const slug of candidates) {
+    for (const alias of aliases[slug]) {
+      const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const direct = new RegExp(`(?:to|with|speak to|talk to|connect me (?:to|with)|transfer me to)\\s+(?:mr\\.?\\s+)?${escaped}\\b`, "i");
+      if (direct.test(lower)) return slug;
+    }
+  }
+
+  for (const slug of candidates) {
+    if (aliases[slug].some((alias) => lower.includes(alias))) return slug;
+  }
+
+  return null;
+}
 function mergeTranscript(previous: TranscriptEntry[], incoming: TranscriptEntry) {
   const last = previous.at(-1);
   if (!last) return [incoming];
@@ -138,6 +173,16 @@ export function AgentExperience({
   // Track the destination by tool_call_id and only switch the portrait after
   // ElevenLabs reports that the transfer itself succeeded.
   const transferTargetByCallRef = useRef<Map<string, Promise<AgentSlug | null>>>(new Map());
+  // Once transfer_to_agent has been requested, ElevenLabs may begin the receiving
+  // agent's audio before the success event reaches React. Keep a temporary
+  // authoritative speaker for those packets so the incoming First Message is
+  // never labelled as the outgoing historical figure.
+  const transferAudioSpeakerSlugRef = useRef<AgentSlug | null>(null);
+  // The visitor's latest explicit transfer request gives us the destination
+  // synchronously, before ElevenLabs' async config lookup can finish. This is
+  // especially important because the receiving agent may start speaking almost
+  // immediately after the transfer system tool fires.
+  const expectedTransferSlugRef = useRef<AgentSlug | null>(null);
   const transferRequestTimerRef = useRef<number | null>(null);
   const noAgentsAvailable = enabledAgents.length === 0;
 
@@ -228,6 +273,41 @@ export function AgentExperience({
     if (clearVisible) setLiveAgentLine(null);
   }, [clearAlignmentTimers]);
 
+  const flushVisitorTurnAtTransferBoundary = useCallback((speakerSlug: AgentSlug) => {
+    // A native ElevenLabs transfer can occur before React's normal speech-end
+    // debounce finishes. Commit the outgoing agent's live row immediately so
+    // audio from the receiving agent can never append to the same transcript
+    // block.
+    if (primaryFinalizeTimerRef.current !== null) {
+      window.clearTimeout(primaryFinalizeTimerRef.current);
+      primaryFinalizeTimerRef.current = null;
+    }
+
+    clearAlignmentTimers();
+
+    const pendingFinal = pendingAgentFinalRef.current;
+    const liveText = liveAgentBufferRef.current.trim();
+    const completedText = pendingFinal?.text?.trim() || liveText;
+
+    if (completedText) {
+      setTranscript((previous) => mergeTranscript(previous, {
+        role: "agent",
+        text: completedText,
+        speakerSlug,
+      }));
+    }
+
+    pendingAgentFinalRef.current = null;
+    liveAgentBufferRef.current = "";
+    alignmentTurnActiveRef.current = false;
+    alignmentSeenInTurnRef.current = false;
+    alignmentPacketCursorMsRef.current = 0;
+    alignmentTurnStartedAtRef.current = null;
+    lastAlignmentAtRef.current = 0;
+    alignmentPlaybackDeadlineRef.current = 0;
+    setLiveAgentLine(null);
+  }, [clearAlignmentTimers]);
+
   const updateAgentUrl = useCallback((slug: AgentSlug) => {
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
@@ -235,7 +315,7 @@ export function AgentExperience({
     window.history.replaceState({}, "", url.toString());
   }, []);
 
-  const confirmActiveAgent = useCallback((slug: AgentSlug) => {
+  const confirmActiveAgent = useCallback((slug: AgentSlug, resetLiveAudio = true) => {
     if (!enabledAgents.includes(slug)) return;
     if (transferRequestTimerRef.current !== null) {
       window.clearTimeout(transferRequestTimerRef.current);
@@ -246,7 +326,7 @@ export function AgentExperience({
     setPendingTransferSlug(null);
     setSuggestionRotation((value) => value + 1);
     setLastSuggestedQuestion(null);
-    resetAlignmentStream(true);
+    if (resetLiveAudio) resetAlignmentStream(true);
     updateAgentUrl(slug);
   }, [enabledAgents, resetAlignmentStream, updateAgentUrl]);
 
@@ -343,7 +423,7 @@ export function AgentExperience({
     const chars = alignment.chars;
     const starts = alignment.starts;
     const durations = alignment.durations;
-    const speakerSlug = speakerSlugOverride ?? activeAgentSlugRef.current;
+    const speakerSlug = speakerSlugOverride ?? transferAudioSpeakerSlugRef.current ?? activeAgentSlugRef.current;
     const turnStartedAt = alignmentTurnStartedAtRef.current ?? now;
     const elapsedMs = Math.max(0, now - turnStartedAt);
 
@@ -405,6 +485,8 @@ export function AgentExperience({
     },
     onDisconnect: () => {
       transferTargetByCallRef.current.clear();
+      transferAudioSpeakerSlugRef.current = null;
+      expectedTransferSlugRef.current = null;
       if (transferRequestTimerRef.current !== null) {
         window.clearTimeout(transferRequestTimerRef.current);
         transferRequestTimerRef.current = null;
@@ -435,8 +517,27 @@ export function AgentExperience({
         ? request.parameters as Record<string, unknown>
         : {};
 
-      const targetPromise = resolveTransferTarget(sourceSlug, parameters).then((slug) => {
-        if (slug) setPendingTransferSlug(slug);
+      const expectedTarget = expectedTransferSlugRef.current;
+      if (expectedTarget && expectedTarget !== sourceSlug && enabledAgents.includes(expectedTarget)) {
+        // The visitor already named the destination. Claim the transfer boundary
+        // immediately so the receiving agent's first audio cannot inherit the
+        // outgoing speaker label while /api/resolve-transfer is still loading.
+        flushVisitorTurnAtTransferBoundary(sourceSlug);
+        transferAudioSpeakerSlugRef.current = expectedTarget;
+        setPendingTransferSlug(expectedTarget);
+      }
+
+      const targetPromise = resolveTransferTarget(sourceSlug, parameters).then((resolvedSlug) => {
+        const slug = resolvedSlug ?? expectedTarget;
+        if (slug) {
+          // If there was no synchronous destination hint (for example an unusual
+          // spoken phrasing), fall back to the authoritative ElevenLabs mapping.
+          if (!transferAudioSpeakerSlugRef.current) {
+            flushVisitorTurnAtTransferBoundary(sourceSlug);
+          }
+          transferAudioSpeakerSlugRef.current = slug;
+          setPendingTransferSlug(slug);
+        }
         return slug;
       });
 
@@ -454,28 +555,46 @@ export function AgentExperience({
           window.clearTimeout(transferRequestTimerRef.current);
           transferRequestTimerRef.current = null;
         }
+        transferAudioSpeakerSlugRef.current = null;
+        expectedTransferSlugRef.current = null;
         setPendingTransferSlug(null);
         return;
       }
 
-      const target = targetPromise ? await targetPromise : null;
+      const resolvedTarget = targetPromise ? await targetPromise : null;
+      const target = resolvedTarget ?? transferAudioSpeakerSlugRef.current;
       if (target) {
-        // Normal visitor mode uses ElevenLabs' successful transfer event as the
-        // authoritative boundary for changing the displayed historical figure.
-        confirmActiveAgent(target);
+        // The request callback already closed the outgoing row and assigned any
+        // early receiving-agent audio to the target. Do not reset alignment here:
+        // the receiving agent's First Message may already be streaming.
+        confirmActiveAgent(target, false);
+        transferAudioSpeakerSlugRef.current = null;
+        expectedTransferSlugRef.current = null;
       } else {
+        transferAudioSpeakerSlugRef.current = null;
+        expectedTransferSlugRef.current = null;
         setPendingTransferSlug(null);
         console.warn("ElevenLabs transferred agents, but the destination could not be mapped to a PRMuseum profile.");
       }
     },
     onAudioAlignment: (alignment: unknown) => {
-      scheduleAlignedTranscript(alignment, activeAgentSlugRef.current);
+      // Do not force the current React agent here. scheduleAlignedTranscript
+      // deliberately prefers the temporary transfer speaker while a native
+      // handoff is in flight.
+      scheduleAlignedTranscript(alignment);
     },
     onMessage: (message) => {
-      const normalized = normalizeMessage(message, activeAgentSlugRef.current);
+      const messageSpeaker = transferAudioSpeakerSlugRef.current ?? activeAgentSlugRef.current;
+      const normalized = normalizeMessage(message, messageSpeaker);
       if (!normalized) return;
 
       if (normalized.role === "visitor") {
+        const requestedTarget = inferRequestedTransferSlug(
+          normalized.text,
+          activeAgentSlugRef.current,
+          enabledAgents,
+        );
+        if (requestedTarget) expectedTransferSlugRef.current = requestedTarget;
         setTranscript((previous) => mergeTranscript(previous, normalized));
         return;
       }
@@ -501,6 +620,7 @@ export function AgentExperience({
         window.clearTimeout(transferRequestTimerRef.current);
         transferRequestTimerRef.current = null;
       }
+      transferAudioSpeakerSlugRef.current = null;
       setPendingTransferSlug(null);
       dialogueActiveRef.current = false;
       dialoguePairRef.current = null;
@@ -592,6 +712,8 @@ export function AgentExperience({
     setRemaining(sessionSeconds);
     setConversationId(null);
     transferTargetByCallRef.current.clear();
+    transferAudioSpeakerSlugRef.current = null;
+    expectedTransferSlugRef.current = null;
     setPendingTransferSlug(null);
     dialogueActiveRef.current = false;
     dialoguePairRef.current = null;
@@ -665,6 +787,12 @@ export function AgentExperience({
     setTextQuestion("");
 
     if (conversation.status === "connected") {
+      const requestedTarget = inferRequestedTransferSlug(
+        clean,
+        activeAgentSlugRef.current,
+        enabledAgents,
+      );
+      if (requestedTarget) expectedTransferSlugRef.current = requestedTarget;
       setTranscript((previous) => mergeTranscript(previous, { role: "visitor", text: clean }));
       try {
         conversation.sendUserMessage(clean);
@@ -718,6 +846,7 @@ export function AgentExperience({
     // transfer_to_agent rules instead of a hidden UI control instruction.
     const target = AGENTS[slug];
     const transferRequest = `I'd like to speak with ${target.name}.`;
+    expectedTransferSlugRef.current = slug;
     setPendingTransferSlug(slug);
     setTranscript((previous) => mergeTranscript(previous, {
       role: "visitor",
@@ -740,6 +869,7 @@ export function AgentExperience({
         window.clearTimeout(transferRequestTimerRef.current);
         transferRequestTimerRef.current = null;
       }
+      expectedTransferSlugRef.current = null;
       setPendingTransferSlug(null);
       setErrorMessage("The request to change historical figures could not be sent.");
     }
