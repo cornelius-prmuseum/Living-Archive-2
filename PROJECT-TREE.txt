@@ -25,5 +25,3 @@
 ./tsconfig.json
 ./tsconfig.tsbuildinfo
 ./wordpress-embed.html
-
-ELEVENLABS-VISITOR-HANDOFF-SETUP.txt  # visitor session handoff configuration

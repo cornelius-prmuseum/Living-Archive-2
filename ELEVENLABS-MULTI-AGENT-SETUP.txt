@@ -1,6 +1,14 @@
-DEPRECATED IN v5.6
+Living Archives v5.7 — Visitor Multi-Agent Setup
+================================================
 
-The older transfer-event/profile-sync architecture is no longer used for visitor-mode switching.
+Visitor switching uses ElevenLabs native transfer_to_agent.
+- Spoken transfer request -> current agent calls transfer_to_agent.
+- Typed transfer request -> current agent calls transfer_to_agent.
+- Portrait click -> website sends the same visible visitor request -> current
+  agent calls transfer_to_agent.
+- Portrait/name changes only after the transfer succeeds.
 
-See ELEVENLABS-VISITOR-HANDOFF-SETUP.txt for the current visitor handoff configuration.
-See AI-DIALOGUE-SETUP.txt for the separate AI Discussion configuration.
+The separate AI Discussion feature is different: it uses two dedicated Dialogue
+agent sessions and never uses transfer_to_agent for turn-taking.
+
+See ELEVENLABS-TRANSFER-SETUP.txt and AI-DIALOGUE-SETUP.txt.

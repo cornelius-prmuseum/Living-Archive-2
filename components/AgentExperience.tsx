@@ -54,9 +54,6 @@ const CLOSE_PROMPT =
   "[INTERNAL SESSION CONTROL — not spoken by the visitor] The museum conversation is ending now. Give one brief final thought, thank the visitor for speaking with you, and say goodbye. Do not ask a new question. Keep this final response concise.";
 
 const DIALOGUE_PROMPT_PREFIX = "[PRMUSEUM AI DIALOGUE CONTROL — not spoken by the visitor]";
-const SESSION_START_PREFIX = "[PRMUSEUM SESSION START — not spoken by the visitor]";
-const HANDOFF_CONTEXT_PREFIX = "[PRMUSEUM SESSION HANDOFF CONTEXT — not spoken by the visitor]";
-const HANDOFF_CONTINUE_PREFIX = "[PRMUSEUM SESSION HANDOFF — not spoken by the visitor]";
 
 
 function formatClock(seconds: number) {
@@ -88,10 +85,7 @@ function normalizeMessage(event: unknown, activeSpeaker: AgentSlug): TranscriptE
   if (
     !text ||
     text === CLOSE_PROMPT ||
-    text.startsWith(DIALOGUE_PROMPT_PREFIX) ||
-    text.startsWith(SESSION_START_PREFIX) ||
-    text.startsWith(HANDOFF_CONTINUE_PREFIX) ||
-    text.startsWith(HANDOFF_CONTEXT_PREFIX)
+    text.startsWith(DIALOGUE_PROMPT_PREFIX)
   ) return null;
 
   const source = String(e.source ?? e.role ?? e.type ?? "").toLowerCase();
@@ -140,13 +134,11 @@ export function AgentExperience({
   const [activeAgentSlug, setActiveAgentSlug] = useState<AgentSlug>(initialAgent.slug);
   const [pendingTransferSlug, setPendingTransferSlug] = useState<AgentSlug | null>(null);
   const activeAgentSlugRef = useRef<AgentSlug>(initialAgent.slug);
-  const transcriptRef = useRef<TranscriptEntry[]>([]);
-  const handoffInProgressRef = useRef(false);
-  const handoffTargetRef = useRef<AgentSlug | null>(null);
-  const handoffSourceRef = useRef<AgentSlug | null>(null);
-  const handoffTokenPromiseRef = useRef<Promise<{ token: string; conversationId?: string | null }> | null>(null);
-  const handoffRequestTimerRef = useRef<number | null>(null);
-  const handoffPreviousMutedRef = useRef(false);
+  // ElevenLabs emits transfer_to_agent as a real system-tool request/response.
+  // Track the destination by tool_call_id and only switch the portrait after
+  // ElevenLabs reports that the transfer itself succeeded.
+  const transferTargetByCallRef = useRef<Map<string, Promise<AgentSlug | null>>>(new Map());
+  const transferRequestTimerRef = useRef<number | null>(null);
   const noAgentsAvailable = enabledAgents.length === 0;
 
   const configuredSeconds = Number(process.env.NEXT_PUBLIC_SESSION_SECONDS || 600);
@@ -184,10 +176,6 @@ export function AgentExperience({
     () => getSuggestedQuestions(agent.slug, suggestionRotation, lastSuggestedQuestion),
     [agent.slug, suggestionRotation, lastSuggestedQuestion],
   );
-
-  useEffect(() => {
-    transcriptRef.current = transcript;
-  }, [transcript]);
 
   const warningSentRef = useRef(false);
   const closePromptSentRef = useRef(false);
@@ -249,9 +237,9 @@ export function AgentExperience({
 
   const confirmActiveAgent = useCallback((slug: AgentSlug) => {
     if (!enabledAgents.includes(slug)) return;
-    if (handoffRequestTimerRef.current !== null) {
-      window.clearTimeout(handoffRequestTimerRef.current);
-      handoffRequestTimerRef.current = null;
+    if (transferRequestTimerRef.current !== null) {
+      window.clearTimeout(transferRequestTimerRef.current);
+      transferRequestTimerRef.current = null;
     }
     activeAgentSlugRef.current = slug;
     setActiveAgentSlug(slug);
@@ -262,49 +250,75 @@ export function AgentExperience({
     updateAgentUrl(slug);
   }, [enabledAgents, resetAlignmentStream, updateAgentUrl]);
 
-  const fetchConversationToken = useCallback(async (slug: AgentSlug) => {
-    const response = await fetch(`/api/token?agent=${encodeURIComponent(slug)}`, { cache: "no-store" });
-    const data = (await response.json()) as { token?: string; conversationId?: string | null; error?: string };
-    if (!response.ok || !data.token) {
-      throw new Error(data.error || `Unable to create a conversation token for ${AGENTS[slug].name}.`);
-    }
-    return { token: data.token, conversationId: data.conversationId ?? null };
-  }, []);
+  const confirmActiveAgentId = useCallback(async (agentId: string) => {
+    const clean = agentId.trim();
+    if (!clean) return "No active ElevenLabs Agent ID was provided.";
 
-  const buildHandoffContext = useCallback((
-    sourceSlug: AgentSlug,
-    targetSlug: AgentSlug,
-    outgoingText?: string,
-  ) => {
-    const entries = [...transcriptRef.current];
-    const cleanOutgoing = outgoingText?.trim();
-    if (cleanOutgoing) {
-      const last = entries.at(-1);
-      if (!(last?.role === "agent" && last.speakerSlug === sourceSlug && last.text === cleanOutgoing)) {
-        entries.push({ role: "agent", text: cleanOutgoing, speakerSlug: sourceSlug });
+    try {
+      const response = await fetch(`/api/resolve-agent?agent_id=${encodeURIComponent(clean)}`, {
+        cache: "no-store",
+      });
+      const data = (await response.json()) as { slug?: string; error?: string };
+
+      if (!response.ok || !isAgentSlug(data.slug) || !enabledAgents.includes(data.slug)) {
+        return data.error || "The active ElevenLabs agent is not available in this PRMuseum interface.";
       }
+
+      confirmActiveAgent(data.slug);
+      return `PRMuseum display synchronized to ${AGENTS[data.slug].name}.`;
+    } catch (error) {
+      console.error("Unable to resolve active ElevenLabs agent", error);
+      return "The PRMuseum display could not synchronize with the active agent.";
     }
+  }, [confirmActiveAgent, enabledAgents]);
 
-    const recent = entries.slice(-24);
-    const transcriptText = recent.map((entry) => {
-      const speaker = entry.role === "visitor"
-        ? "Visitor"
-        : AGENTS[entry.speakerSlug ?? sourceSlug].name;
-      return `${speaker}: ${entry.text}`;
-    }).join("\n");
+  const resolveTransferTarget = useCallback(async (
+    sourceSlug: AgentSlug,
+    parameters: Record<string, unknown>,
+  ): Promise<AgentSlug | null> => {
+    // Some future/current payloads may expose an Agent ID directly. Prefer it.
+    const directAgentId = typeof parameters.agent_id === "string"
+      ? parameters.agent_id.trim()
+      : "";
 
-    const clipped = transcriptText.length > 12000
-      ? transcriptText.slice(transcriptText.length - 12000)
-      : transcriptText;
+    try {
+      if (directAgentId) {
+        const directResponse = await fetch(
+          `/api/resolve-agent?agent_id=${encodeURIComponent(directAgentId)}`,
+          { cache: "no-store" },
+        );
+        const directData = (await directResponse.json()) as { slug?: string };
+        if (directResponse.ok && isAgentSlug(directData.slug) && enabledAgents.includes(directData.slug)) {
+          return directData.slug;
+        }
+      }
 
-    return `${HANDOFF_CONTEXT_PREFIX}
-You are ${AGENTS[targetSlug].name}, joining an ongoing museum conversation with the same visitor.
-The visitor was previously speaking with ${AGENTS[sourceSlug].name} and explicitly asked to continue with you.
-Treat the transcript below as prior conversational context. Continue naturally from it; do not restart the interview, repeat a generic greeting, or claim you personally said the previous agent's lines.
+      const rawNumber = parameters.agent_number;
+      const agentNumber = typeof rawNumber === "number"
+        ? rawNumber
+        : typeof rawNumber === "string" && rawNumber.trim() !== ""
+          ? Number(rawNumber)
+          : NaN;
 
-Recent conversation:
-${clipped}`;
-  }, []);
+      if (!Number.isInteger(agentNumber) || agentNumber < 0) return null;
+
+      const response = await fetch(
+        `/api/resolve-transfer?source=${encodeURIComponent(sourceSlug)}&agent_number=${agentNumber}`,
+        { cache: "no-store" },
+      );
+      const data = (await response.json()) as { slug?: string; error?: string };
+
+      if (!response.ok || !isAgentSlug(data.slug) || !enabledAgents.includes(data.slug)) {
+        console.warn("Unable to resolve transfer destination", data.error || data);
+        return null;
+      }
+
+      return data.slug;
+    } catch (error) {
+      console.error("Unable to resolve transfer destination", error);
+      return null;
+    }
+  }, [enabledAgents]);
 
   const scheduleAlignedTranscript = useCallback((payload: unknown, speakerSlugOverride?: AgentSlug) => {
     const alignment = normalizeAudioAlignment(payload);
@@ -377,35 +391,26 @@ ${clipped}`;
   }, [clearAlignmentTimers]);
 
   const conversation = useConversation({
-    // Backward-compatibility shims for older ElevenLabs agent configurations.
-    // Visitor profile/session switching is owned by Living Archives v5.6, so
-    // these legacy client tools intentionally do not change UI state. They
-    // remain registered only so an agent that still has one configured does
-    // not fail the entire conversation with "client tool is not defined".
     clientTools: {
-      syncActiveAgent: (_parameters: unknown) => {
-        return "Active-agent display is managed by the Living Archives session handoff system.";
-      },
-      setActiveAgent: (_parameters: unknown) => {
-        return "Active-agent display is managed by the Living Archives session handoff system.";
-      },
+      // Legacy compatibility only. Native transfer_to_agent events are the
+      // authoritative source of visitor-agent identity. These no-op handlers
+      // prevent older ElevenLabs agent configurations from failing if the old
+      // client tools have not yet been removed.
+      syncActiveAgent: async () => "Legacy identity-sync tool acknowledged; native transfer events control the display.",
+      setActiveAgent: async () => "Legacy identity-sync tool acknowledged; native transfer events control the display.",
     },
     onConnect: () => {
       setScreen("active");
       setErrorMessage("");
     },
     onDisconnect: () => {
-      resetAlignmentStream(false);
-      if (handoffInProgressRef.current) {
-        // Intentional session replacement: keep the museum conversation and
-        // transcript alive while the next historical figure connects.
-        return;
-      }
-      if (handoffRequestTimerRef.current !== null) {
-        window.clearTimeout(handoffRequestTimerRef.current);
-        handoffRequestTimerRef.current = null;
+      transferTargetByCallRef.current.clear();
+      if (transferRequestTimerRef.current !== null) {
+        window.clearTimeout(transferRequestTimerRef.current);
+        transferRequestTimerRef.current = null;
       }
       setPendingTransferSlug(null);
+      resetAlignmentStream(false);
       dialogueActiveRef.current = false;
       dialoguePairRef.current = null;
       dialoguePrimarySlugRef.current = null;
@@ -418,6 +423,50 @@ ${clipped}`;
       setDialogueSpeakerSlug(null);
       setDialogueCommand(null);
       setScreen((current) => (current === "error" ? current : "finished"));
+    },
+    onAgentToolRequest: (request: any) => {
+      if (request?.tool_name !== "transfer_to_agent" || request?.tool_type !== "system") return;
+
+      const toolCallId = String(request?.tool_call_id || "");
+      if (!toolCallId) return;
+
+      const sourceSlug = activeAgentSlugRef.current;
+      const parameters = request?.parameters && typeof request.parameters === "object"
+        ? request.parameters as Record<string, unknown>
+        : {};
+
+      const targetPromise = resolveTransferTarget(sourceSlug, parameters).then((slug) => {
+        if (slug) setPendingTransferSlug(slug);
+        return slug;
+      });
+
+      transferTargetByCallRef.current.set(toolCallId, targetPromise);
+    },
+    onAgentToolResponse: async (response: any) => {
+      if (response?.tool_name !== "transfer_to_agent" || response?.tool_type !== "system") return;
+
+      const toolCallId = String(response?.tool_call_id || "");
+      const targetPromise = transferTargetByCallRef.current.get(toolCallId);
+      transferTargetByCallRef.current.delete(toolCallId);
+
+      if (response?.is_error) {
+        if (transferRequestTimerRef.current !== null) {
+          window.clearTimeout(transferRequestTimerRef.current);
+          transferRequestTimerRef.current = null;
+        }
+        setPendingTransferSlug(null);
+        return;
+      }
+
+      const target = targetPromise ? await targetPromise : null;
+      if (target) {
+        // Normal visitor mode uses ElevenLabs' successful transfer event as the
+        // authoritative boundary for changing the displayed historical figure.
+        confirmActiveAgent(target);
+      } else {
+        setPendingTransferSlug(null);
+        console.warn("ElevenLabs transferred agents, but the destination could not be mapped to a PRMuseum profile.");
+      }
     },
     onAudioAlignment: (alignment: unknown) => {
       scheduleAlignedTranscript(alignment, activeAgentSlugRef.current);
@@ -436,7 +485,6 @@ ${clipped}`;
       // mode, alignment events provide the same word-timed transcript behavior.
       if (
         (dialogueActiveRef.current && dialoguePhaseRef.current === "awaiting-primary") ||
-        handoffTargetRef.current !== null ||
         alignmentSeenInTurnRef.current ||
         alignmentTurnActiveRef.current
       ) {
@@ -449,14 +497,10 @@ ${clipped}`;
     },
     onError: (error) => {
       console.error(error);
-      if (handoffRequestTimerRef.current !== null) {
-        window.clearTimeout(handoffRequestTimerRef.current);
-        handoffRequestTimerRef.current = null;
+      if (transferRequestTimerRef.current !== null) {
+        window.clearTimeout(transferRequestTimerRef.current);
+        transferRequestTimerRef.current = null;
       }
-      handoffInProgressRef.current = false;
-      handoffTargetRef.current = null;
-      handoffSourceRef.current = null;
-      handoffTokenPromiseRef.current = null;
       setPendingTransferSlug(null);
       dialogueActiveRef.current = false;
       dialoguePairRef.current = null;
@@ -474,92 +518,6 @@ ${clipped}`;
       setScreen("error");
     },
   });
-
-  const performVisitorHandoff = useCallback(async (outgoingText: string) => {
-    const targetSlug = handoffTargetRef.current;
-    const sourceSlug = handoffSourceRef.current ?? activeAgentSlugRef.current;
-    if (!targetSlug || handoffInProgressRef.current) return;
-
-    handoffInProgressRef.current = true;
-    setErrorMessage("");
-
-    const context = buildHandoffContext(sourceSlug, targetSlug, outgoingText);
-    const tokenPromise = handoffTokenPromiseRef.current ?? fetchConversationToken(targetSlug);
-
-    try {
-      // Freeze visitor audio during the brief session replacement. The old
-      // historical figure has already finished the handoff line at this point.
-      conversation.setMuted(true);
-
-      const tokenData = await tokenPromise;
-      await Promise.resolve(conversation.endSession());
-      await new Promise((resolve) => window.setTimeout(resolve, 80));
-
-      resetAlignmentStream(true);
-
-      // The incoming figure gets a separate ElevenLabs conversation. Visitor
-      // agents should have no dashboard First Message; Living Archives owns the
-      // opening turn so handoffs can continue naturally without runtime
-      // conversation overrides.
-      const nextId = await conversation.startSession({
-        conversationToken: tokenData.token,
-      });
-
-      confirmActiveAgent(targetSlug);
-      setConversationId(typeof nextId === "string" ? nextId : tokenData.conversationId ?? null);
-      conversation.sendContextualUpdate(context);
-      conversation.setMuted(handoffPreviousMutedRef.current);
-
-      if (handoffRequestTimerRef.current !== null) {
-        window.clearTimeout(handoffRequestTimerRef.current);
-        handoffRequestTimerRef.current = null;
-      }
-      handoffTargetRef.current = null;
-      handoffSourceRef.current = null;
-      handoffTokenPromiseRef.current = null;
-      handoffInProgressRef.current = false;
-      setPendingTransferSlug(null);
-
-      // Contextual updates inform without prompting. This private control turn
-      // prompts the incoming historical figure to continue, and is filtered out
-      // of the museum transcript by normalizeMessage().
-      window.setTimeout(() => {
-        try {
-          conversation.sendUserMessage(
-            `${HANDOFF_CONTINUE_PREFIX} Continue the ongoing museum conversation now. ` +
-            `The visitor explicitly asked to speak with you. Respond naturally using the handoff context you were given. ` +
-            `Do not repeat a generic introduction and do not describe the handoff technology.`
-          );
-        } catch (error) {
-          console.error("Unable to prompt the incoming historical figure", error);
-          setErrorMessage(`${AGENTS[targetSlug].name} connected, but the handoff response could not be started.`);
-        }
-      }, 120);
-    } catch (error) {
-      console.error("Unable to complete visitor session handoff", error);
-      if (handoffRequestTimerRef.current !== null) {
-        window.clearTimeout(handoffRequestTimerRef.current);
-        handoffRequestTimerRef.current = null;
-      }
-      handoffInProgressRef.current = false;
-      handoffTargetRef.current = null;
-      handoffSourceRef.current = null;
-      handoffTokenPromiseRef.current = null;
-      setPendingTransferSlug(null);
-      setErrorMessage(
-        error instanceof Error
-          ? `The handoff could not be completed: ${error.message}`
-          : "The handoff to the selected historical figure could not be completed.",
-      );
-      setScreen("error");
-    }
-  }, [
-    buildHandoffContext,
-    confirmActiveAgent,
-    conversation,
-    fetchConversationToken,
-    resetAlignmentStream,
-  ]);
 
   const resetSessionRefs = useCallback(() => {
     warningSentRef.current = false;
@@ -592,10 +550,6 @@ ${clipped}`;
     } catch (error) {
       console.error("Error ending session", error);
     } finally {
-      handoffInProgressRef.current = false;
-      handoffTargetRef.current = null;
-      handoffSourceRef.current = null;
-      handoffTokenPromiseRef.current = null;
       setPendingTransferSlug(null);
       setScreen("finished");
     }
@@ -618,10 +572,6 @@ ${clipped}`;
     setDialogueSecondaryStatus(null);
     setDialogueSpeakerSlug(null);
     setDialogueCommand(null);
-    handoffInProgressRef.current = false;
-    handoffTargetRef.current = null;
-    handoffSourceRef.current = null;
-    handoffTokenPromiseRef.current = null;
     setPendingTransferSlug(null);
     setScreen("wrapping");
 
@@ -641,14 +591,7 @@ ${clipped}`;
     setTranscript(initialQuestion?.trim() ? [{ role: "visitor", text: initialQuestion.trim() }] : []);
     setRemaining(sessionSeconds);
     setConversationId(null);
-    handoffInProgressRef.current = false;
-    handoffTargetRef.current = null;
-    handoffSourceRef.current = null;
-    handoffTokenPromiseRef.current = null;
-    if (handoffRequestTimerRef.current !== null) {
-      window.clearTimeout(handoffRequestTimerRef.current);
-      handoffRequestTimerRef.current = null;
-    }
+    transferTargetByCallRef.current.clear();
     setPendingTransferSlug(null);
     dialogueActiveRef.current = false;
     dialoguePairRef.current = null;
@@ -678,27 +621,24 @@ ${clipped}`;
     try {
       await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      const data = await fetchConversationToken(activeAgentSlug);
+      const response = await fetch(`/api/token?agent=${encodeURIComponent(activeAgentSlug)}`, {
+        cache: "no-store",
+      });
+      const data = (await response.json()) as {
+        token?: string;
+        conversationId?: string | null;
+        error?: string;
+      };
+
+      if (!response.ok || !data.token) {
+        throw new Error(data.error || "Unable to create a conversation token.");
+      }
+
       const id = await conversation.startSession({ conversationToken: data.token });
       setConversationId(typeof id === "string" ? id : data.conversationId ?? null);
 
       if (initialQuestion?.trim()) {
         conversation.sendUserMessage(initialQuestion.trim());
-      } else {
-        // Normal visitor agents intentionally have no ElevenLabs First Message.
-        // The webpage starts the opening turn so the same session-start path can
-        // also be reused cleanly after future handoffs. This internal control
-        // message is filtered from the museum transcript by normalizeMessage().
-        window.setTimeout(() => {
-          try {
-            conversation.sendUserMessage(
-              `${SESSION_START_PREFIX} Begin the museum conversation now. Greet the visitor briefly in character as ${AGENTS[activeAgentSlug].name}, then invite their question. Keep the opening concise.`
-            );
-          } catch (error) {
-            console.error("Unable to start the agent greeting", error);
-            setErrorMessage("The voice session connected, but the opening greeting could not be started.");
-          }
-        }, 120);
       }
     } catch (error) {
       console.error(error);
@@ -709,7 +649,7 @@ ${clipped}`;
       );
       setScreen("error");
     }
-  }, [activeAgentSlug, conversation, fetchConversationToken, noAgentsAvailable, resetSessionRefs, sessionSeconds]);
+  }, [activeAgentSlug, conversation, noAgentsAvailable, resetSessionRefs, sessionSeconds]);
 
   const sendTextQuestion = useCallback(async (question: string) => {
     const clean = question.trim();
@@ -772,48 +712,34 @@ ${clipped}`;
       return;
     }
 
-    // Visitor-mode handoffs are owned by this webpage, not ElevenLabs' native
-    // transfer_to_agent tool. The click is still represented as a normal visitor
-    // request, while the current figure gives one brief handoff line.
-    const sourceSlug = activeAgentSlugRef.current;
+    // During a live visitor conversation, clicking another portrait is treated
+    // exactly like the visitor asking to speak with that historical figure.
+    // This keeps transfer behavior dependent on the agent's normal
+    // transfer_to_agent rules instead of a hidden UI control instruction.
     const target = AGENTS[slug];
-    const handoffRequest = `I'd like to speak with ${target.name}.`;
-
-    handoffSourceRef.current = sourceSlug;
-    handoffTargetRef.current = slug;
-    handoffPreviousMutedRef.current = conversation.isMuted;
-    handoffTokenPromiseRef.current = fetchConversationToken(slug);
+    const transferRequest = `I'd like to speak with ${target.name}.`;
     setPendingTransferSlug(slug);
-    setTranscript((previous) => mergeTranscript(previous, { role: "visitor", text: handoffRequest }));
+    setTranscript((previous) => mergeTranscript(previous, {
+      role: "visitor",
+      text: transferRequest,
+    }));
 
-    if (handoffRequestTimerRef.current !== null) {
-      window.clearTimeout(handoffRequestTimerRef.current);
+    if (transferRequestTimerRef.current !== null) {
+      window.clearTimeout(transferRequestTimerRef.current);
     }
-    handoffRequestTimerRef.current = window.setTimeout(() => {
-      handoffRequestTimerRef.current = null;
-      handoffTargetRef.current = null;
-      handoffSourceRef.current = null;
-      handoffTokenPromiseRef.current = null;
-      setPendingTransferSlug(null);
-      setErrorMessage("The handoff did not complete. You can try selecting the figure again.");
-    }, 30_000);
+    transferRequestTimerRef.current = window.setTimeout(() => {
+      transferRequestTimerRef.current = null;
+      setPendingTransferSlug((current) => current === slug ? null : current);
+    }, 20000);
 
     try {
-      conversation.sendContextualUpdate(
-        `${HANDOFF_CONTEXT_PREFIX} The visitor has asked to continue with ${target.name}. ` +
-        `Give one brief, natural handoff sentence only. Do not answer on ${target.name}'s behalf, do not ask a new question, and do not use any transfer tool. ` +
-        `The museum interface will open a separate session with ${target.name} after you finish speaking.`
-      );
-      conversation.sendUserMessage(handoffRequest);
+      conversation.sendUserMessage(transferRequest);
     } catch (error) {
-      console.error("Unable to begin session handoff", error);
-      if (handoffRequestTimerRef.current !== null) {
-        window.clearTimeout(handoffRequestTimerRef.current);
-        handoffRequestTimerRef.current = null;
+      console.error("Unable to request agent transfer", error);
+      if (transferRequestTimerRef.current !== null) {
+        window.clearTimeout(transferRequestTimerRef.current);
+        transferRequestTimerRef.current = null;
       }
-      handoffTargetRef.current = null;
-      handoffSourceRef.current = null;
-      handoffTokenPromiseRef.current = null;
       setPendingTransferSlug(null);
       setErrorMessage("The request to change historical figures could not be sent.");
     }
@@ -822,7 +748,6 @@ ${clipped}`;
     confirmActiveAgent,
     conversation,
     enabledAgents,
-    fetchConversationToken,
     pendingTransferSlug,
     dialogueActive,
     liveAgentLine,
@@ -1164,23 +1089,6 @@ ${clipped}`;
       setLiveAgentLine(null);
 
       if (
-        !dialogueActiveRef.current &&
-        handoffTargetRef.current !== null &&
-        !handoffInProgressRef.current
-      ) {
-        if (!completedText) {
-          setErrorMessage("The current historical figure finished, but no handoff response text was received.");
-          handoffTargetRef.current = null;
-          handoffSourceRef.current = null;
-          handoffTokenPromiseRef.current = null;
-          setPendingTransferSlug(null);
-          return;
-        }
-        void performVisitorHandoff(completedText);
-        return;
-      }
-
-      if (
         dialogueActiveRef.current &&
         dialoguePhaseRef.current === "awaiting-primary"
       ) {
@@ -1252,7 +1160,6 @@ ${clipped}`;
     clearAlignmentTimers,
     conversation.isSpeaking,
     liveAgentLine,
-    performVisitorHandoff,
     stopAiDialogue,
   ]);
 
@@ -1270,6 +1177,15 @@ ${clipped}`;
   }, [transcript, liveAgentLine]);
 
   useEffect(() => {
+    if (!pendingTransferSlug || conversation.status !== "connected") return;
+    const timer = window.setTimeout(() => {
+      setPendingTransferSlug(null);
+      setErrorMessage("The agent transfer did not complete. You can try selecting the figure again.");
+    }, 20_000);
+    return () => window.clearTimeout(timer);
+  }, [conversation.status, pendingTransferSlug]);
+
+  useEffect(() => {
     return () => {
       clearAlignmentTimers();
     };
@@ -1283,7 +1199,7 @@ ${clipped}`;
     screen === "wrapping"
       ? "Concluding"
       : pendingTransferSlug
-        ? `Handing off to ${AGENTS[pendingTransferSlug].shortName}`
+        ? `Connecting to ${AGENTS[pendingTransferSlug].shortName}`
         : conversation.status === "connecting"
           ? "Connecting"
           : isDisplayedSpeaking
@@ -1418,7 +1334,7 @@ ${clipped}`;
                 {screen === "wrapping"
                   ? `${agent.shortName} is finishing the conversation.`
                   : pendingTransferSlug
-                    ? `Preparing ${AGENTS[pendingTransferSlug].name}…`
+                    ? `Transferring the conversation to ${AGENTS[pendingTransferSlug].name}…`
                     : visitorTurnLocked
                       ? "Let the current response finish before asking the next question."
                       : "Speak naturally, type a question, or choose a suggested question below."}
@@ -1615,7 +1531,7 @@ ${clipped}`;
                     <small>{candidate.years}</small>
                   </span>
                   <span className="agent-choice-state">
-                    {isPending ? "Handoff…" : isDialogueSpeaker ? "Speaking" : isDialogueParticipant ? "Dialogue" : isActive ? "On line" : "Select"}
+                    {isPending ? "Connecting…" : isDialogueSpeaker ? "Speaking" : isDialogueParticipant ? "Dialogue" : isActive ? "On line" : "Select"}
                   </span>
                 </button>
               );
@@ -1623,7 +1539,7 @@ ${clipped}`;
           </div>
 
           <p className="rail-note">
-            In visitor mode the museum opens a new session for the selected historical figure and carries the conversation context forward. In AI discussion mode the portrait follows the independent conversation instance that is actually speaking.
+            In visitor mode the portrait follows successful agent transfers. In AI dialogue mode it follows the independent conversation instance that is actually speaking.
           </p>
         </aside>
       </div>

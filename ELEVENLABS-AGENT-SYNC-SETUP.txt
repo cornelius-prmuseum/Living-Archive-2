@@ -1,6 +1,11 @@
-DEPRECATED IN v5.6
+Living Archives v5.7 — Agent Identity Synchronization
+=====================================================
 
-The older transfer-event/profile-sync architecture is no longer used for visitor-mode switching.
+Normal visitor-mode identity is synchronized from ElevenLabs' successful
+transfer_to_agent system-tool event.
 
-See ELEVENLABS-VISITOR-HANDOFF-SETUP.txt for the current visitor handoff configuration.
-See AI-DIALOGUE-SETUP.txt for the separate AI Discussion configuration.
+Do not configure syncActiveAgent or setActiveAgent for normal operation.
+The app contains no-op compatibility handlers only so older agent configs do
+not crash before those tools are removed.
+
+See ELEVENLABS-TRANSFER-SETUP.txt for the current visitor-agent configuration.
