@@ -16,6 +16,13 @@ Create a dialogue copy of each historical agent you want available:
 The dialogue copy can reuse the same voice, knowledge base, historical/persona prompt,
 and pronunciation settings as the visitor-facing version.
 
+IMPORTANT TURN-TIMEOUT SETTING:
+- In each Dialogue agent's Advanced / turn settings, disable the silence/end-call timeout
+  (API value: silence_end_call_timeout = -1) so a waiting speaker is not disconnected
+  while the other historical figure is talking.
+- v5.2 also sends periodic sendUserActivity() keep-alives to the standby session and
+  automatically reconnects a standby agent if ElevenLabs still closes it before its turn.
+
 REMOVE from each Dialogue agent:
 - First Message / greeting (leave it blank)
 - transfer_to_agent

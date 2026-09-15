@@ -186,6 +186,8 @@ export function AgentExperience({
   // in the same order the audio is played.
   const alignmentPacketCursorMsRef = useRef(0);
   const alignmentTurnStartedAtRef = useRef<number | null>(null);
+  const lastAlignmentAtRef = useRef<number>(0);
+  const alignmentPlaybackDeadlineRef = useRef<number>(0);
   const pendingAgentFinalRef = useRef<TranscriptEntry | null>(null);
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -214,6 +216,8 @@ export function AgentExperience({
     alignmentSeenInTurnRef.current = false;
     alignmentPacketCursorMsRef.current = 0;
     alignmentTurnStartedAtRef.current = null;
+    lastAlignmentAtRef.current = 0;
+    alignmentPlaybackDeadlineRef.current = 0;
     pendingAgentFinalRef.current = null;
     if (clearVisible) setLiveAgentLine(null);
   }, [clearAlignmentTimers]);
@@ -309,6 +313,7 @@ export function AgentExperience({
     if (!alignment || alignment.chars.length === 0) return;
 
     const now = performance.now();
+    lastAlignmentAtRef.current = now;
 
     if (!alignmentTurnActiveRef.current) {
       clearAlignmentTimers();
@@ -344,6 +349,10 @@ export function AgentExperience({
       packetEndMs = Math.max(0, Number(starts.at(-1) ?? firstStartMs) - firstStartMs) + 40;
     }
     alignmentPacketCursorMsRef.current = packetBaseMs + packetEndMs;
+    alignmentPlaybackDeadlineRef.current = Math.max(
+      alignmentPlaybackDeadlineRef.current,
+      turnStartedAt + alignmentPacketCursorMsRef.current,
+    );
 
     // Reveal the current agent turn directly inside the full transcript. This
     // uses audio timing rather than the completed LLM response, so words appear
@@ -1030,6 +1039,8 @@ export function AgentExperience({
       alignmentSeenInTurnRef.current = false;
       alignmentPacketCursorMsRef.current = 0;
       alignmentTurnStartedAtRef.current = null;
+      lastAlignmentAtRef.current = 0;
+      alignmentPlaybackDeadlineRef.current = 0;
       setLiveAgentLine(null);
 
       if (
@@ -1069,12 +1080,35 @@ export function AgentExperience({
       }
     };
 
-    // The final onMessage event can arrive just after isSpeaking becomes false.
-    // Delay finalization briefly so the relay always has the completed text.
+    // ElevenLabs can briefly report isSpeaking=false between TTS/audio chunks.
+    // In visitor mode, do not commit the live transcript row until both:
+    //   1) no fresh alignment packet has arrived for a short quiet window, and
+    //   2) the latest audio-alignment playback horizon has passed.
+    // This keeps one spoken answer in one transcript row instead of fragmenting
+    // it into repeated Bernays/Ivy/Page blocks.
     if (dialogueActiveRef.current && dialoguePhaseRef.current === "awaiting-primary") {
       primaryFinalizeTimerRef.current = window.setTimeout(finalize, 500);
     } else {
-      finalize();
+      const VISITOR_ALIGNMENT_QUIET_MS = 650;
+      const VISITOR_AUDIO_PAD_MS = 250;
+
+      const waitForTrueTurnEnd = () => {
+        const now = performance.now();
+        const quietRemaining = lastAlignmentAtRef.current > 0
+          ? Math.max(0, (lastAlignmentAtRef.current + VISITOR_ALIGNMENT_QUIET_MS) - now)
+          : 0;
+        const audioRemaining = Math.max(0, (alignmentPlaybackDeadlineRef.current + VISITOR_AUDIO_PAD_MS) - now);
+        const waitMs = Math.max(quietRemaining, audioRemaining);
+
+        if (waitMs > 0) {
+          primaryFinalizeTimerRef.current = window.setTimeout(waitForTrueTurnEnd, Math.max(100, waitMs));
+          return;
+        }
+
+        finalize();
+      };
+
+      waitForTrueTurnEnd();
     }
   }, [
     aiDialogueMaxTurns,

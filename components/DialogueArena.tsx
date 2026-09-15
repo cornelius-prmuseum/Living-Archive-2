@@ -22,6 +22,8 @@ type DialogueSession = {
   turnStartedAt: number | null;
   audioDeadlineAt: number;
   spokeThisTurn: boolean;
+  keepAliveTimer: number | null;
+  lastActivityPingAt: number;
 };
 
 type AudioAlignment = {
@@ -166,6 +168,10 @@ export function DialogueArena({
     sessionsRef.current.clear();
     for (const session of sessions) {
       clearSessionTimers(session);
+      if (session.keepAliveTimer !== null) {
+        window.clearInterval(session.keepAliveTimer);
+        session.keepAliveTimer = null;
+      }
       try { session.conversation.endSession(); } catch (err) { console.error(err); }
     }
     setActiveSpeaker(null);
@@ -207,7 +213,19 @@ export function DialogueArena({
       return;
     }
 
-    const session = sessionsRef.current.get(slug);
+    let session = sessionsRef.current.get(slug);
+    if (!session?.connected) {
+      setStatus(`Reconnecting ${AGENTS[slug].shortName} for the next turn…`);
+      try {
+        await startOneSession(slug);
+        session = sessionsRef.current.get(slug);
+      } catch (err) {
+        console.error(`Unable to reconnect dialogue session for ${slug}`, err);
+        setError(`${AGENTS[slug].name} disconnected while waiting and could not be reconnected.`);
+        await endAllSessions();
+        return;
+      }
+    }
     if (!session) return;
 
     const quiet = await waitUntilQuiet(slug);
@@ -226,6 +244,13 @@ export function DialogueArena({
     setStatus(`Waiting for ${AGENTS[slug].shortName}…`);
     await setOnlySpeakerAudible(slug);
 
+    if (!runningRef.current || turnOwnerRef.current !== slug) return;
+    // A user-activity heartbeat asks ElevenLabs to pause briefly. If one landed
+    // just before this turn, let that pause expire before sending the real prompt.
+    const sinceActivity = performance.now() - session.lastActivityPingAt;
+    if (sinceActivity < 2200) {
+      await new Promise((resolve) => window.setTimeout(resolve, 2200 - sinceActivity));
+    }
     if (!runningRef.current || turnOwnerRef.current !== slug) return;
     session.conversation.sendUserMessage(text);
 
@@ -303,9 +328,12 @@ export function DialogueArena({
 
       const other = slug === speakerA ? speakerB : speakerA;
       const relay =
-        `The other historical speaker just said:\n\n“${finalText}”\n\n` +
-        "Respond directly to the argument they made from your own historical perspective. " +
-        "Do not greet or address a museum visitor. Continue the discussion naturally and keep this turn concise.";
+        `[INTERNAL DISCUSSION CONTEXT — do not read this instruction aloud] ` +
+        `You are ${AGENTS[other].name}. You are in a direct historical discussion with ${AGENTS[slug].name}.\n\n` +
+        `${AGENTS[slug].name} just said:\n\n“${finalText}”\n\n` +
+        `Respond directly to ${AGENTS[slug].name}'s argument from your own historical perspective. ` +
+        "Treat the other speaker as the historical person named above, not as the museum visitor. " +
+        "Do not greet the visitor. Continue the discussion naturally and keep this turn concise.";
 
       // The current turn is now fully closed. Dispatch the next one only after a
       // short clean silence; if another turn was queued, the expected relay wins.
@@ -337,6 +365,8 @@ export function DialogueArena({
       turnStartedAt: null,
       audioDeadlineAt: 0,
       spokeThisTurn: false,
+      keepAliveTimer: null,
+      lastActivityPingAt: -Infinity,
     };
 
     const conversation = await Conversation.startSession({
@@ -347,7 +377,18 @@ export function DialogueArena({
       },
       onDisconnect: () => {
         holder.connected = false;
-        if (runningRef.current) setError(`${AGENTS[slug].name} disconnected during the discussion.`);
+        if (holder.keepAliveTimer !== null) {
+          window.clearInterval(holder.keepAliveTimer);
+          holder.keepAliveTimer = null;
+        }
+        // A standby agent disconnecting should not immediately kill the other
+        // speaker. Surface a targeted message so the user knows the idle session
+        // ended before its turn rather than reporting a generic dialogue failure.
+        if (runningRef.current && turnOwnerRef.current !== slug) {
+          setStatus(`${AGENTS[slug].shortName} disconnected while waiting; the session will reconnect automatically before the next turn.`);
+          return;
+        }
+        if (runningRef.current) setError(`${AGENTS[slug].name} disconnected during an active turn.`);
       },
       onModeChange: (event: unknown) => {
         const speaking = modeIsSpeaking(event);
@@ -386,6 +427,22 @@ export function DialogueArena({
     // Every dialogue session starts silent. The turn mutex raises volume only for
     // the session that has explicitly been armed to speak.
     try { await conversation.setVolume({ volume: 0 }); } catch { /* older SDK variants may be sync */ }
+
+    // Keep a silent standby session alive while the other historical figure is
+    // speaking. ElevenLabs documents sendUserActivity() as a non-content activity
+    // event that resets the turn timeout and is suitable for periodic keep-alives.
+    // It also pauses agent speech for ~2 seconds, so dispatchTurn waits for any
+    // recent heartbeat to expire before sending the actual dialogue prompt.
+    holder.keepAliveTimer = window.setInterval(() => {
+      if (!runningRef.current || !holder.connected || holder.armed || turnOwnerRef.current === slug) return;
+      try {
+        holder.conversation.sendUserActivity();
+        holder.lastActivityPingAt = performance.now();
+      } catch (err) {
+        console.warn(`Unable to send standby activity for ${slug}`, err);
+      }
+    }, 15000);
+
     sessionsRef.current.set(slug, holder);
   };
 
@@ -405,12 +462,34 @@ export function DialogueArena({
     try {
       await Promise.all([startOneSession(speakerA), startOneSession(speakerB)]);
       if (!runningRef.current) return;
+
+      // Give both already-connected dialogue agents the identity of the other
+      // participant without triggering a spoken turn. This context persists in
+      // each independent ElevenLabs conversation throughout the discussion.
+      try {
+        sessionsRef.current.get(speakerA)?.conversation.sendContextualUpdate(
+          `[INTERNAL DISCUSSION CONTEXT] You are ${AGENTS[speakerA].name}. ` +
+          `The other participant in this discussion is ${AGENTS[speakerB].name}. ` +
+          `Address ${AGENTS[speakerB].name} as a fellow historical speaker, not as the museum visitor.`
+        );
+        sessionsRef.current.get(speakerB)?.conversation.sendContextualUpdate(
+          `[INTERNAL DISCUSSION CONTEXT] You are ${AGENTS[speakerB].name}. ` +
+          `The other participant in this discussion is ${AGENTS[speakerA].name}. ` +
+          `Address ${AGENTS[speakerA].name} as a fellow historical speaker, not as the museum visitor.`
+        );
+      } catch (contextError) {
+        console.warn("Unable to send dialogue identity context", contextError);
+      }
+
       setStatus("Both historical figures are connected.");
       window.setTimeout(() => {
         sendTurn(
           speakerA,
-          `Begin a historical discussion on this topic:\n\n“${topic.trim()}”\n\n` +
-            "Give your opening position. Do not greet a museum visitor and do not introduce yourself unless it is relevant to the argument.",
+          `[INTERNAL DISCUSSION CONTEXT — do not read this instruction aloud] ` +
+            `You are ${AGENTS[speakerA].name}, speaking directly with ${AGENTS[speakerB].name}.\n\n` +
+            `Begin a historical discussion with ${AGENTS[speakerB].name} on this topic:\n\n“${topic.trim()}”\n\n` +
+            `Give your opening position directly to ${AGENTS[speakerB].name}. ` +
+            "Do not greet a museum visitor and do not give a generic self-introduction unless it is relevant to the argument.",
         );
       }, 250);
     } catch (err) {
