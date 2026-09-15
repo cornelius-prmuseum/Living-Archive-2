@@ -54,6 +54,7 @@ const CLOSE_PROMPT =
   "[INTERNAL SESSION CONTROL — not spoken by the visitor] The museum conversation is ending now. Give one brief final thought, thank the visitor for speaking with you, and say goodbye. Do not ask a new question. Keep this final response concise.";
 
 const DIALOGUE_PROMPT_PREFIX = "[PRMUSEUM AI DIALOGUE CONTROL — not spoken by the visitor]";
+const SESSION_START_PREFIX = "[PRMUSEUM SESSION START — not spoken by the visitor]";
 const HANDOFF_CONTEXT_PREFIX = "[PRMUSEUM SESSION HANDOFF CONTEXT — not spoken by the visitor]";
 const HANDOFF_CONTINUE_PREFIX = "[PRMUSEUM SESSION HANDOFF — not spoken by the visitor]";
 
@@ -88,6 +89,7 @@ function normalizeMessage(event: unknown, activeSpeaker: AgentSlug): TranscriptE
     !text ||
     text === CLOSE_PROMPT ||
     text.startsWith(DIALOGUE_PROMPT_PREFIX) ||
+    text.startsWith(SESSION_START_PREFIX) ||
     text.startsWith(HANDOFF_CONTINUE_PREFIX) ||
     text.startsWith(HANDOFF_CONTEXT_PREFIX)
   ) return null;
@@ -495,18 +497,13 @@ ${clipped}`;
 
       resetAlignmentStream(true);
 
-      // The incoming figure gets a separate ElevenLabs conversation. Suppress
-      // its normal First Message so it can continue the existing discussion
-      // rather than greeting the visitor as a brand-new call. This requires
-      // Security → Overrides → First message to be enabled on the agent.
+      // The incoming figure gets a separate ElevenLabs conversation. Visitor
+      // agents should have no dashboard First Message; Living Archives owns the
+      // opening turn so handoffs can continue naturally without runtime
+      // conversation overrides.
       const nextId = await conversation.startSession({
         conversationToken: tokenData.token,
-        overrides: {
-          agent: {
-            firstMessage: "",
-          },
-        },
-      } as any);
+      });
 
       confirmActiveAgent(targetSlug);
       setConversationId(typeof nextId === "string" ? nextId : tokenData.conversationId ?? null);
@@ -687,6 +684,21 @@ ${clipped}`;
 
       if (initialQuestion?.trim()) {
         conversation.sendUserMessage(initialQuestion.trim());
+      } else {
+        // Normal visitor agents intentionally have no ElevenLabs First Message.
+        // The webpage starts the opening turn so the same session-start path can
+        // also be reused cleanly after future handoffs. This internal control
+        // message is filtered from the museum transcript by normalizeMessage().
+        window.setTimeout(() => {
+          try {
+            conversation.sendUserMessage(
+              `${SESSION_START_PREFIX} Begin the museum conversation now. Greet the visitor briefly in character as ${AGENTS[activeAgentSlug].name}, then invite their question. Keep the opening concise.`
+            );
+          } catch (error) {
+            console.error("Unable to start the agent greeting", error);
+            setErrorMessage("The voice session connected, but the opening greeting could not be started.");
+          }
+        }, 120);
       }
     } catch (error) {
       console.error(error);

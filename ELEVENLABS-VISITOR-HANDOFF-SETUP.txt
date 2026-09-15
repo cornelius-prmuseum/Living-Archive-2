@@ -1,56 +1,46 @@
-LIVING ARCHIVES — VISITOR SESSION HANDOFF SETUP (v5.6)
+LIVING ARCHIVES VISITOR AGENT SETUP — v5.6.2
 
-Visitor-mode figure changes no longer use ElevenLabs' native transfer_to_agent system tool.
-The web app ends the current agent session after a brief handoff line, opens a new session for the selected figure, carries the recent transcript forward as context, and prompts the new figure to continue naturally.
+NORMAL VISITOR AGENTS
+Edward Bernays / Ivy Lee / Walter Lippmann / Arthur W. Page
 
-ELEVENLABS SETTINGS — NORMAL VISITOR AGENTS
+Recommended ElevenLabs settings:
 
-Apply these settings to Edward Bernays, Ivy Lee, Walter Lippmann, Arthur W. Page, and any future visitor agent.
+1. Transfer to AI Agent: OFF / REMOVE THE TOOL
+   Living Archives now changes figures by ending the current ElevenLabs session
+   and opening a new one. Do not configure transfer_to_agent for visitor switching.
 
-1. REMOVE NATIVE AGENT TRANSFERS
-   Remove the "Transfer to AI Agent" / transfer_to_agent system tool and its transfer rules from these visitor agents.
-   The website now owns visitor handoffs.
+2. First Message: LEAVE BLANK
+   Living Archives sends the opening greeting itself for a fresh museum session.
+   During a handoff it instead injects the recent conversation and prompts the
+   incoming figure to continue naturally.
 
-2. REMOVE OLD PROFILE-SYNC TOOLS
-   Remove client tools named:
-     - syncActiveAgent
-     - setActiveAgent
-   Also remove prompt instructions that require either tool.
-   Portrait identity is now tied to the session the website intentionally opened.
+3. Security -> Overrides -> First message: NOT REQUIRED
+   v5.6.2 no longer sends a First Message override. You may leave this disabled.
 
-3. ENABLE FIRST MESSAGE OVERRIDE
-   Agent → Security → Overrides → First message: ON
+4. Remove these old client tools when convenient:
+   - syncActiveAgent
+   - setActiveAgent
+   v5.6.2 still registers harmless compatibility handlers so an older agent
+   configuration containing either tool will not crash the conversation.
 
-   Keep each agent's normal First Message configured in ElevenLabs.
-   A fresh visitor conversation will still use it.
-   During a mid-conversation handoff, Living Archives starts the incoming session with firstMessage="" so the incoming figure does not replay a generic greeting.
+5. Prompt cleanup
+   Remove instructions requiring transfer_to_agent, syncActiveAgent, or
+   setActiveAgent. The webpage now owns figure switching and portrait state.
 
-4. CLIENT EVENTS
-   Keep the audio/alignment events required by the live transcript enabled.
-   Native transfer tool request/response events are no longer required for visitor switching.
+6. Keep normal voice/persona/knowledge settings unchanged.
 
-5. RECOMMENDED PROMPT ADDITION
+HOW HANDOFFS WORK
+- Visitor clicks another historical figure.
+- The click appears in the transcript as a normal visitor request.
+- The current figure gives one brief handoff sentence.
+- Living Archives waits until that spoken turn fully finishes.
+- The current ElevenLabs session ends.
+- A fresh session opens for the selected figure.
+- Recent transcript context is injected silently.
+- The incoming figure is prompted to continue naturally.
+- The portrait changes only after the new session connects.
 
-   [LIVING ARCHIVES SESSION HANDOFF]
-
-   Living Archives may tell you through private contextual information that the visitor has asked to continue with another historical figure.
-
-   If you are the outgoing figure, give only one brief, natural handoff sentence. Do not answer on the other figure's behalf and do not begin a new topic.
-
-   If you are joining an ongoing conversation, use the supplied prior-conversation context. Continue naturally from the existing discussion. Do not replay your normal greeting, do not pretend that you personally said the previous historical figure's lines, and do not describe the technical handoff process.
-
-HOW THE WEB APP HANDOFF WORKS
-
-Visitor clicks Ivy Lee while speaking with Bernays
-  → transcript records: Visitor: "I'd like to speak with Ivy Lee."
-  → app begins fetching Ivy Lee's conversation token
-  → Bernays receives private context telling him to give one short handoff line
-  → Bernays finishes speaking
-  → Bernays session closes
-  → Ivy Lee starts in a brand-new ElevenLabs session with First Message suppressed
-  → recent transcript is sent to Ivy Lee with sendContextualUpdate()
-  → app privately prompts Ivy Lee to continue
-  → portrait/name switch to Ivy Lee
-  → visitor continues speaking normally with Ivy Lee
-
-The museum transcript remains continuous even though ElevenLabs conversation IDs change at each handoff.
+IMPORTANT
+If a dashboard First Message is still configured, the agent may speak that greeting
+before Living Archives sends its own opening/continuation prompt. Clear the First
+Message on all four visitor agents for the intended behavior.
