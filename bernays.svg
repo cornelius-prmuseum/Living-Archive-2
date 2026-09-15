@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">
+  <rect width="400" height="400" fill="#ded4c3"/>
+  <circle cx="200" cy="148" r="78" fill="#6f716c"/>
+  <path d="M76 384c15-100 60-154 124-154s109 54 124 154" fill="#4b565d"/>
+  <circle cx="200" cy="200" r="188" fill="none" stroke="#ffffff" stroke-opacity=".42" stroke-width="4"/>
+  <text x="200" y="366" text-anchor="middle" font-family="Georgia,serif" font-size="34" fill="#fffdf8">EB</text>
+</svg>
