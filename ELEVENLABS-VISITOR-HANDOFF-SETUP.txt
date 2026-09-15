@@ -1,0 +1,56 @@
+LIVING ARCHIVES — VISITOR SESSION HANDOFF SETUP (v5.6)
+
+Visitor-mode figure changes no longer use ElevenLabs' native transfer_to_agent system tool.
+The web app ends the current agent session after a brief handoff line, opens a new session for the selected figure, carries the recent transcript forward as context, and prompts the new figure to continue naturally.
+
+ELEVENLABS SETTINGS — NORMAL VISITOR AGENTS
+
+Apply these settings to Edward Bernays, Ivy Lee, Walter Lippmann, Arthur W. Page, and any future visitor agent.
+
+1. REMOVE NATIVE AGENT TRANSFERS
+   Remove the "Transfer to AI Agent" / transfer_to_agent system tool and its transfer rules from these visitor agents.
+   The website now owns visitor handoffs.
+
+2. REMOVE OLD PROFILE-SYNC TOOLS
+   Remove client tools named:
+     - syncActiveAgent
+     - setActiveAgent
+   Also remove prompt instructions that require either tool.
+   Portrait identity is now tied to the session the website intentionally opened.
+
+3. ENABLE FIRST MESSAGE OVERRIDE
+   Agent → Security → Overrides → First message: ON
+
+   Keep each agent's normal First Message configured in ElevenLabs.
+   A fresh visitor conversation will still use it.
+   During a mid-conversation handoff, Living Archives starts the incoming session with firstMessage="" so the incoming figure does not replay a generic greeting.
+
+4. CLIENT EVENTS
+   Keep the audio/alignment events required by the live transcript enabled.
+   Native transfer tool request/response events are no longer required for visitor switching.
+
+5. RECOMMENDED PROMPT ADDITION
+
+   [LIVING ARCHIVES SESSION HANDOFF]
+
+   Living Archives may tell you through private contextual information that the visitor has asked to continue with another historical figure.
+
+   If you are the outgoing figure, give only one brief, natural handoff sentence. Do not answer on the other figure's behalf and do not begin a new topic.
+
+   If you are joining an ongoing conversation, use the supplied prior-conversation context. Continue naturally from the existing discussion. Do not replay your normal greeting, do not pretend that you personally said the previous historical figure's lines, and do not describe the technical handoff process.
+
+HOW THE WEB APP HANDOFF WORKS
+
+Visitor clicks Ivy Lee while speaking with Bernays
+  → transcript records: Visitor: "I'd like to speak with Ivy Lee."
+  → app begins fetching Ivy Lee's conversation token
+  → Bernays receives private context telling him to give one short handoff line
+  → Bernays finishes speaking
+  → Bernays session closes
+  → Ivy Lee starts in a brand-new ElevenLabs session with First Message suppressed
+  → recent transcript is sent to Ivy Lee with sendContextualUpdate()
+  → app privately prompts Ivy Lee to continue
+  → portrait/name switch to Ivy Lee
+  → visitor continues speaking normally with Ivy Lee
+
+The museum transcript remains continuous even though ElevenLabs conversation IDs change at each handoff.

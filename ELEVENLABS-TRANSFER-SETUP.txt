@@ -1,0 +1,5 @@
+DEPRECATED IN v5.6
+
+Living Archives no longer uses ElevenLabs' native transfer_to_agent system tool for visitor-mode figure changes.
+
+See ELEVENLABS-VISITOR-HANDOFF-SETUP.txt instead.

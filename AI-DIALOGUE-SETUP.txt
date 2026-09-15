@@ -65,7 +65,7 @@ PRMUSEUM_AI_DIALOGUE_ENABLED=false
 Visitor conversation mode:
 - one normal ElevenLabs agent session
 - normal visitor microphone/text questions
-- visitor-requested transfer behavior can remain on the normal agents
+- visitor figure changes are handled by Living Archives session handoffs; native transfer_to_agent is not needed on the normal agents
 
 AI Discussion mode:
 - two Dialogue agent sessions are opened simultaneously

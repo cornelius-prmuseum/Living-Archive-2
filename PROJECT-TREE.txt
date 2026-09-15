@@ -15,7 +15,6 @@
 ./components/SecondaryDialogueSession.tsx
 ./lib/agents.ts
 ./lib/serverAgents.ts
-./lib/suggestedQuestions.ts
 ./next-env.d.ts
 ./next.config.ts
 ./package.json
@@ -26,3 +25,5 @@
 ./tsconfig.json
 ./tsconfig.tsbuildinfo
 ./wordpress-embed.html
+
+ELEVENLABS-VISITOR-HANDOFF-SETUP.txt  # visitor session handoff configuration
