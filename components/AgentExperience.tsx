@@ -10,6 +10,7 @@ import {
   isAgentSlug,
   type AgentSlug,
 } from "@/lib/agents";
+import { getSuggestedQuestions } from "@/lib/suggestedQuestions";
 
 type TranscriptEntry = {
   role: "visitor" | "agent";
@@ -52,7 +53,6 @@ function normalizeAudioAlignment(payload: unknown): AudioAlignment | null {
 const CLOSE_PROMPT =
   "[INTERNAL SESSION CONTROL — not spoken by the visitor] The museum conversation is ending now. Give one brief final thought, thank the visitor for speaking with you, and say goodbye. Do not ask a new question. Keep this final response concise.";
 
-const SWITCH_PROMPT_PREFIX = "[MUSEUM UI AGENT SWITCH — not spoken by the visitor]";
 const DIALOGUE_PROMPT_PREFIX = "[PRMUSEUM AI DIALOGUE CONTROL — not spoken by the visitor]";
 
 
@@ -85,7 +85,6 @@ function normalizeMessage(event: unknown, activeSpeaker: AgentSlug): TranscriptE
   if (
     !text ||
     text === CLOSE_PROMPT ||
-    text.startsWith(SWITCH_PROMPT_PREFIX) ||
     text.startsWith(DIALOGUE_PROMPT_PREFIX)
   ) return null;
 
@@ -139,6 +138,7 @@ export function AgentExperience({
   // Track the destination by tool_call_id and only switch the portrait after
   // ElevenLabs reports that the transfer itself succeeded.
   const transferTargetByCallRef = useRef<Map<string, Promise<AgentSlug | null>>>(new Map());
+  const transferRequestTimerRef = useRef<number | null>(null);
   const noAgentsAvailable = enabledAgents.length === 0;
 
   const configuredSeconds = Number(process.env.NEXT_PUBLIC_SESSION_SECONDS || 600);
@@ -154,6 +154,8 @@ export function AgentExperience({
   );
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [textQuestion, setTextQuestion] = useState("");
+  const [suggestionRotation, setSuggestionRotation] = useState(0);
+  const [lastSuggestedQuestion, setLastSuggestedQuestion] = useState<string | null>(null);
   const [liveAgentLine, setLiveAgentLine] = useState<TranscriptEntry | null>(null);
   const [dialoguePartnerSlug, setDialoguePartnerSlug] = useState<AgentSlug | null>(
     enabledAgents.find((slug) => slug !== initialAgent.slug) ?? null,
@@ -170,6 +172,10 @@ export function AgentExperience({
 
   const displayAgentSlug = dialogueActive && dialogueSpeakerSlug ? dialogueSpeakerSlug : activeAgentSlug;
   const agent = AGENTS[displayAgentSlug];
+  const visibleSuggestedQuestions = useMemo(
+    () => getSuggestedQuestions(agent.slug, suggestionRotation, lastSuggestedQuestion),
+    [agent.slug, suggestionRotation, lastSuggestedQuestion],
+  );
 
   const warningSentRef = useRef(false);
   const closePromptSentRef = useRef(false);
@@ -231,9 +237,15 @@ export function AgentExperience({
 
   const confirmActiveAgent = useCallback((slug: AgentSlug) => {
     if (!enabledAgents.includes(slug)) return;
+    if (transferRequestTimerRef.current !== null) {
+      window.clearTimeout(transferRequestTimerRef.current);
+      transferRequestTimerRef.current = null;
+    }
     activeAgentSlugRef.current = slug;
     setActiveAgentSlug(slug);
     setPendingTransferSlug(null);
+    setSuggestionRotation((value) => value + 1);
+    setLastSuggestedQuestion(null);
     resetAlignmentStream(true);
     updateAgentUrl(slug);
   }, [enabledAgents, resetAlignmentStream, updateAgentUrl]);
@@ -404,6 +416,10 @@ export function AgentExperience({
     },
     onDisconnect: () => {
       transferTargetByCallRef.current.clear();
+      if (transferRequestTimerRef.current !== null) {
+        window.clearTimeout(transferRequestTimerRef.current);
+        transferRequestTimerRef.current = null;
+      }
       setPendingTransferSlug(null);
       resetAlignmentStream(false);
       dialogueActiveRef.current = false;
@@ -445,6 +461,10 @@ export function AgentExperience({
       transferTargetByCallRef.current.delete(toolCallId);
 
       if (response?.is_error) {
+        if (transferRequestTimerRef.current !== null) {
+          window.clearTimeout(transferRequestTimerRef.current);
+          transferRequestTimerRef.current = null;
+        }
         setPendingTransferSlug(null);
         return;
       }
@@ -488,6 +508,10 @@ export function AgentExperience({
     },
     onError: (error) => {
       console.error(error);
+      if (transferRequestTimerRef.current !== null) {
+        window.clearTimeout(transferRequestTimerRef.current);
+        transferRequestTimerRef.current = null;
+      }
       setPendingTransferSlug(null);
       dialogueActiveRef.current = false;
       dialoguePairRef.current = null;
@@ -575,7 +599,7 @@ export function AgentExperience({
     if (noAgentsAvailable) return;
 
     setErrorMessage("");
-    setTranscript([]);
+    setTranscript(initialQuestion?.trim() ? [{ role: "visitor", text: initialQuestion.trim() }] : []);
     setRemaining(sessionSeconds);
     setConversationId(null);
     transferTargetByCallRef.current.clear();
@@ -645,6 +669,7 @@ export function AgentExperience({
     setTextQuestion("");
 
     if (conversation.status === "connected") {
+      setTranscript((previous) => mergeTranscript(previous, { role: "visitor", text: clean }));
       try {
         conversation.sendUserMessage(clean);
       } catch (error) {
@@ -661,6 +686,12 @@ export function AgentExperience({
     event.preventDefault();
     void sendTextQuestion(textQuestion);
   }, [sendTextQuestion, textQuestion]);
+
+  const askSuggestedQuestion = useCallback((question: string) => {
+    setLastSuggestedQuestion(question);
+    setSuggestionRotation((value) => value + 1);
+    void sendTextQuestion(question);
+  }, [sendTextQuestion]);
 
   const selectAgent = useCallback((slug: AgentSlug) => {
     if (
@@ -684,18 +715,34 @@ export function AgentExperience({
       return;
     }
 
-    // Keep the current portrait/name until ElevenLabs reports a successful
-    // transfer_to_agent system-tool response. The tool event, not the prompt,
-    // controls which profile is displayed.
-    setPendingTransferSlug(slug);
+    // During a live visitor conversation, clicking another portrait is treated
+    // exactly like the visitor asking to speak with that historical figure.
+    // This keeps transfer behavior dependent on the agent's normal
+    // transfer_to_agent rules instead of a hidden UI control instruction.
     const target = AGENTS[slug];
+    const transferRequest = `I'd like to speak with ${target.name}.`;
+    setPendingTransferSlug(slug);
+    setTranscript((previous) => mergeTranscript(previous, {
+      role: "visitor",
+      text: transferRequest,
+    }));
+
+    if (transferRequestTimerRef.current !== null) {
+      window.clearTimeout(transferRequestTimerRef.current);
+    }
+    transferRequestTimerRef.current = window.setTimeout(() => {
+      transferRequestTimerRef.current = null;
+      setPendingTransferSlug((current) => current === slug ? null : current);
+    }, 20000);
 
     try {
-      conversation.sendUserMessage(
-        `${SWITCH_PROMPT_PREFIX} The visitor selected ${target.name} in the museum interface. Do not read or discuss this control message. Use transfer_to_agent now to transfer the ongoing conversation to ${target.name}. Preserve the existing conversation context. The webpage will update the displayed profile from ElevenLabs transfer events; do not call any display-sync tool.`,
-      );
+      conversation.sendUserMessage(transferRequest);
     } catch (error) {
       console.error("Unable to request agent transfer", error);
+      if (transferRequestTimerRef.current !== null) {
+        window.clearTimeout(transferRequestTimerRef.current);
+        transferRequestTimerRef.current = null;
+      }
       setPendingTransferSlug(null);
       setErrorMessage("The request to change historical figures could not be sent.");
     }
@@ -1208,8 +1255,8 @@ export function AgentExperience({
               </p>
 
               <SuggestedQuestions
-                questions={agent.recommendedQuestions}
-                onAsk={(question) => void sendTextQuestion(question)}
+                questions={visibleSuggestedQuestions}
+                onAsk={askSuggestedQuestion}
                 disabled={textDisabled}
               />
 
@@ -1300,8 +1347,8 @@ export function AgentExperience({
               />
 
               <SuggestedQuestions
-                questions={agent.recommendedQuestions}
-                onAsk={(question) => void sendTextQuestion(question)}
+                questions={visibleSuggestedQuestions}
+                onAsk={askSuggestedQuestion}
                 disabled={textDisabled}
                 compact
               />
@@ -1515,7 +1562,7 @@ function SuggestedQuestions({
   disabled,
   compact = false,
 }: {
-  questions: readonly [string, string, string];
+  questions: readonly string[];
   onAsk: (question: string) => void;
   disabled: boolean;
   compact?: boolean;

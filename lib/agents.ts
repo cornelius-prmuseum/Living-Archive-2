@@ -8,7 +8,6 @@ export type PublicAgent = {
   subtitle: string;
   portrait: string;
   intro: string;
-  recommendedQuestions: readonly [string, string, string];
 };
 
 export const AGENTS: Record<AgentSlug, PublicAgent> = {
@@ -21,11 +20,6 @@ export const AGENTS: Record<AgentSlug, PublicAgent> = {
     portrait: "/portraits/bernays.svg",
     intro:
       "Speak with a historically informed interpretation of Edward Bernays about public relations, persuasion, campaigns, and the profession he helped shape.",
-    recommendedQuestions: [
-      "How did you persuade Americans to eat bacon and eggs?",
-      "What did you mean by engineering consent?",
-      "How do you view the ethics of public relations?",
-    ],
   },
   "ivy-lee": {
     slug: "ivy-lee",
@@ -36,11 +30,6 @@ export const AGENTS: Record<AgentSlug, PublicAgent> = {
     portrait: "/portraits/ivy-lee.svg",
     intro:
       "Speak with a historically informed interpretation of Ivy Lee about publicity, corporate communication, journalism, and the early development of public relations.",
-    recommendedQuestions: [
-      "Why did you issue the Declaration of Principles?",
-      "How should a company communicate during a crisis?",
-      "What responsibility does a company have to the press and public?",
-    ],
   },
   lippmann: {
     slug: "lippmann",
@@ -51,11 +40,6 @@ export const AGENTS: Record<AgentSlug, PublicAgent> = {
     portrait: "/portraits/lippmann.svg",
     intro:
       "Speak with a historically informed interpretation of Walter Lippmann about public opinion, journalism, democracy, propaganda, and mass communication.",
-    recommendedQuestions: [
-      "What did you mean by pictures in our heads?",
-      "Why were you skeptical of public opinion?",
-      "How did World War I shape your thinking about propaganda?",
-    ],
   },
   "arthur-page": {
     slug: "arthur-page",
@@ -66,11 +50,6 @@ export const AGENTS: Record<AgentSlug, PublicAgent> = {
     portrait: "/portraits/arthur-page.svg",
     intro:
       "Speak with a historically informed interpretation of Arthur W. Page about corporate character, management responsibility, public trust, and the development of modern corporate public relations.",
-    recommendedQuestions: [
-      "What principles should guide a company's public relations?",
-      "Why should public relations have a voice in management decisions?",
-      "How did your work at AT&T shape your view of corporate responsibility?",
-    ],
   },
 };
 
