@@ -375,6 +375,19 @@ ${clipped}`;
   }, [clearAlignmentTimers]);
 
   const conversation = useConversation({
+    // Backward-compatibility shims for older ElevenLabs agent configurations.
+    // Visitor profile/session switching is owned by Living Archives v5.6, so
+    // these legacy client tools intentionally do not change UI state. They
+    // remain registered only so an agent that still has one configured does
+    // not fail the entire conversation with "client tool is not defined".
+    clientTools: {
+      syncActiveAgent: (_parameters: unknown) => {
+        return "Active-agent display is managed by the Living Archives session handoff system.";
+      },
+      setActiveAgent: (_parameters: unknown) => {
+        return "Active-agent display is managed by the Living Archives session handoff system.";
+      },
+    },
     onConnect: () => {
       setScreen("active");
       setErrorMessage("");
