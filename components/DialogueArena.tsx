@@ -505,13 +505,12 @@ export function DialogueArena({
   return (
     <div className="dialogue-mode-shell">
       <div className="dialogue-mode-topbar">
-        <div className="dialogue-mode-actions">
-          <button type="button" className="secondary-button" onClick={async () => { await endAllSessions(); onExit(); }}>
-            ← Visitor conversation
-          </button>
-          <span>AI Discussion</span>
+        <button type="button" className="secondary-button" onClick={async () => { await endAllSessions(); onExit(); }}>
+          ← Visitor conversation
+        </button>
+        <div className="dialogue-topbar-brand">
+          <img className="living-archives-logo dialogue-living-archives-logo" src="/living-archives-logo.png" alt="Living Archives" />
         </div>
-        <img className="living-archives-logo dialogue-living-archives-logo centered-archives-logo" src="/living-archives-logo-new.png" alt="Living Archives" />
       </div>
 
       <div className="dialogue-mode-card">
