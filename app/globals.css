@@ -1721,3 +1721,90 @@ body {
     max-width: 44%;
   }
 }
+
+
+/* v5.15 — centered new Living Archives logo + previous buttons */
+:root {
+  --heading: #000000;
+}
+
+h1, h2, h3, h4, h5, h6,
+.character-header h1,
+.agent-rail h2,
+.dialogue-stage h1,
+.dialogue-setup-card h2,
+.dialogue-mode-actions > span {
+  color: #000000;
+}
+
+.museum-mark.living-archives-mark {
+  justify-content: center;
+  margin: 0 0 24px;
+}
+
+.centered-archives-logo,
+.main-living-archives-logo {
+  width: clamp(240px, 42vw, 460px);
+  max-width: 100%;
+  height: auto;
+}
+
+.dialogue-mode-topbar {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+}
+
+.dialogue-living-archives-logo {
+  order: 1;
+  width: clamp(250px, 40vw, 520px);
+  max-width: 100%;
+}
+
+.dialogue-mode-actions {
+  order: 2;
+}
+
+.primary-button,
+.secondary-button,
+.end-button,
+.question-composer button,
+.global-mode-switch button {
+  border-radius: 3px;
+  font-family: "Montserrat", "Avenir Next", Avenir, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  box-shadow: 0 6px 18px rgba(35,31,32,.08);
+  transform: none;
+}
+
+.primary-button:hover,
+.question-composer button:hover:not(:disabled),
+.global-mode-switch button:hover:not(:disabled),
+.secondary-button:hover,
+.end-button:hover {
+  transform: none;
+}
+
+.primary-button, .global-mode-switch button, .question-composer button {
+  padding: 10px 16px;
+}
+
+.global-mode-switch button {
+  border-radius: 3px;
+}
+
+@media (max-width: 640px) {
+  .centered-archives-logo,
+  .main-living-archives-logo {
+    width: min(86vw, 360px);
+  }
+
+  .dialogue-living-archives-logo {
+    width: min(86vw, 360px);
+    max-width: 86vw;
+  }
+
+  .dialogue-mode-topbar {
+    gap: 10px;
+  }
+}

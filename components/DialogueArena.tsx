@@ -511,7 +511,7 @@ export function DialogueArena({
           </button>
           <span>AI Discussion</span>
         </div>
-        <img className="living-archives-logo dialogue-living-archives-logo" src="/living-archives-logo.png" alt="Living Archives" />
+        <img className="living-archives-logo dialogue-living-archives-logo centered-archives-logo" src="/living-archives-logo-new.png" alt="Living Archives" />
       </div>
 
       <div className="dialogue-mode-card">
