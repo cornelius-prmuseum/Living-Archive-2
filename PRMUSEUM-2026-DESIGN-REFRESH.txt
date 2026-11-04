@@ -1,0 +1,30 @@
+PRMuseum Living Archives — v5.11 Visual Refresh
+
+Reference
+- PRMuseum staging site: https://themuseumofstg.wpengine.com/
+- Supplied PRMuseum 2026 logo
+
+Brand palette
+- PRMuseum Blue: #336699
+- PRMuseum Ink: #231F20
+- Soft Blue: #EAF1F7
+- Page Background: #F4F6F8
+- White Surface: #FFFFFF
+- Neutral Border: #D7DEE5
+
+Typography
+- Clean contemporary sans-serif stack: Avenir Next, Avenir, Helvetica Neue, Helvetica, Arial, sans-serif.
+- No webfont dependency was added, so Vercel builds do not depend on an external font download.
+
+Visual changes
+- Replaced the old Museum of Public Relations text mark with the supplied PRMuseum logo.
+- Logo is left-aligned at the top of visitor mode.
+- Added the PRMuseum logo to the top-left of AI Discussion mode.
+- Replaced parchment/serif styling with white and light-gray museum-site surfaces.
+- Updated buttons, forms, transcript, agent rail, active states, and dialogue UI to PRMuseum blue.
+- Reduced shadows and rounded/pill styling for a flatter contemporary site feel.
+- Added responsive mobile logo/header treatments.
+
+Behavior
+- Based directly on v5.10 transfer-speaker-sync.
+- No intentional changes to ElevenLabs transfer logic, transcript logic, suggested-question logic, or AI Discussion orchestration.

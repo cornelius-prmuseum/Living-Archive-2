@@ -38,7 +38,7 @@ export function HistoricalVoiceApp({
     <>
       {dialogueAvailable && (
         <div className="global-mode-switch">
-          <span>Living Archives</span>
+          <img className="living-archives-logo" src="/living-archives-logo.png" alt="Living Archives" />
           <button type="button" onClick={() => setMode("dialogue")}>Open AI Discussion</button>
         </div>
       )}

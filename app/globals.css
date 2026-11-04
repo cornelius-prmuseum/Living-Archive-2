@@ -1,3 +1,5 @@
+@import url("https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=Open+Sans:wght@600;700;800&display=swap");
+
 :root {
   --paper: #f4efe4;
   --paper-deep: #e8ddca;
@@ -264,7 +266,7 @@ footer p { margin: 0; color: var(--muted); font-family: Arial, Helvetica, sans-s
   font-family: Arial, Helvetica, sans-serif;
   text-transform: uppercase;
   letter-spacing: .13em;
-  color: var(--blue);
+  color: #336699;
   font-size: 9px;
   font-weight: 700;
 }
@@ -580,7 +582,7 @@ footer p { margin: 0; color: var(--muted); font-family: Arial, Helvetica, sans-s
   font-family: Arial, Helvetica, sans-serif;
   text-transform: uppercase;
   letter-spacing: .1em;
-  color: var(--blue);
+  color: #336699;
   font-size: 9px;
   font-weight: 700;
   margin-bottom: 5px;
@@ -646,7 +648,7 @@ footer p { margin: 0; color: var(--muted); font-family: Arial, Helvetica, sans-s
 .live-transcript-heading > span {
   text-transform: uppercase;
   letter-spacing: .1em;
-  color: var(--blue);
+  color: #336699;
   font-size: 9px;
   font-weight: 700;
 }
@@ -882,4 +884,649 @@ footer p { margin: 0; color: var(--muted); font-family: Arial, Helvetica, sans-s
   .dialogue-mode-shell { padding: 12px; }
   .dialogue-pair-grid { grid-template-columns: 1fr; }
   .dialogue-transcript { height: 50vh; min-height: 300px; }
+}
+
+/* =========================================================
+   v5.11 — PRMuseum 2026 visual refresh
+   Palette follows the supplied PRMuseum wordmark:
+   blue #336699 / ink #231f20, with clean museum-site neutrals.
+   ========================================================= */
+:root {
+  --paper: #f7fbfe;
+  --paper-deep: #edf6fd;
+  --ink: #2e2e2e;
+  --muted: #6a7b8a;
+  --blue: #2ea3f2;
+  --blue-dark: #2f97e0;
+  --blue-soft: #edf7fe;
+  --red: #9a3f3a;
+  --line: #d9e7f2;
+  --white: #ffffff;
+  --surface: #ffffff;
+  --surface-soft: #f7fbfe;
+}
+
+html,
+body {
+  background: #f4f6f8;
+  color: var(--ink);
+  font-family: "Montserrat", "Avenir Next", Avenir, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+body {
+  background:
+    linear-gradient(180deg, #ffffff 0, #ffffff 118px, #f4f6f8 118px, #f4f6f8 100%);
+}
+
+button,
+input,
+select,
+textarea,
+a {
+  font-family: inherit;
+}
+
+.experience-shell {
+  padding: clamp(20px, 3.5vw, 46px);
+  align-items: start;
+}
+
+.experience-layout {
+  width: min(1120px, 100%);
+  grid-template-columns: minmax(0, 820px) 256px;
+  gap: 24px;
+}
+
+.museum-card,
+.agent-rail,
+.dialogue-stage,
+.dialogue-setup-card,
+.dialogue-transcript-section,
+.dialogue-running-controls,
+.dialogue-error {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: 0 10px 30px rgba(35, 31, 32, .06);
+}
+
+.museum-card {
+  border-radius: 4px;
+  padding: clamp(28px, 4.5vw, 52px);
+  text-align: center;
+  overflow: visible;
+}
+
+.museum-card::before {
+  display: none;
+}
+
+.museum-mark {
+  margin: 0 0 clamp(28px, 4vw, 42px);
+  padding: 0;
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  text-align: left;
+}
+
+.prmuseum-logo {
+  display: block;
+  width: clamp(190px, 27vw, 290px);
+  max-width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+
+.portrait-wrap {
+  width: 156px;
+  height: 156px;
+  padding: 5px;
+  border: 2px solid #e4e9ee;
+  background: #fff;
+}
+
+.portrait-wrap.speaking {
+  box-shadow: 0 0 0 6px rgba(51, 102, 153, .10), 0 0 0 12px rgba(51, 102, 153, .04);
+}
+
+.status-dot {
+  background: #4f8a68;
+  border-color: #fff;
+}
+
+.character-header {
+  max-width: 680px;
+}
+
+.eyebrow,
+.rail-eyebrow,
+.meta-label,
+.live-transcript-heading,
+.suggested-questions,
+.agent-choice-copy,
+.agent-choice-state,
+.rail-note,
+.small-note,
+.global-mode-switch,
+.dialogue-mode-topbar,
+.dialogue-status,
+.dialogue-turn-count,
+.dialogue-setup-card label,
+.dialogue-transcript-heading,
+.dialogue-transcript-line > span,
+.transcript-line span,
+.transcript-placeholder {
+  font-family: "Montserrat", "Avenir Next", Avenir, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+.eyebrow {
+  margin-bottom: 10px;
+  color: #336699;
+  font-size: 10px;
+  letter-spacing: .16em;
+  font-weight: 700;
+}
+
+h1,
+h2,
+h3 {
+  font-family: "Montserrat", "Avenir Next", Avenir, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: var(--ink);
+}
+
+h1 {
+  font-size: clamp(38px, 5.2vw, 58px);
+  line-height: 1.04;
+  letter-spacing: -.035em;
+  font-weight: 650;
+}
+
+h2 {
+  font-weight: 650;
+  letter-spacing: -.02em;
+}
+
+.years {
+  margin-top: 12px;
+  color: #77818a;
+  font-family: "Montserrat", "Avenir Next", Avenir, "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-style: normal;
+  font-size: 13px;
+  letter-spacing: .025em;
+}
+
+.subtitle {
+  color: #336699;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.content-block {
+  max-width: 650px;
+}
+
+.intro {
+  color: #2e2e2e;
+  font-size: 17px;
+  line-height: 1.72;
+}
+
+.small-note,
+.live-instruction,
+.finish-block p,
+.error-block p {
+  color: var(--muted);
+}
+
+.primary-button,
+.secondary-button,
+.end-button {
+  min-height: 46px;
+  border-radius: 3px;
+  padding: 12px 20px;
+  font-size: 13px;
+  letter-spacing: .015em;
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.primary-button {
+  background: var(--blue);
+  border-color: var(--blue);
+}
+
+.primary-button:hover {
+  background: var(--blue-dark);
+  border-color: var(--blue-dark);
+  transform: translateY(-1px);
+}
+
+.secondary-button {
+  color: var(--blue);
+  border-color: rgba(46, 163, 242, .42);
+  background: #fff;
+}
+
+.secondary-button:hover {
+  color: var(--blue-dark);
+  border-color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.end-button {
+  border-radius: 3px;
+}
+
+.live-meta {
+  margin-top: 4px;
+  padding: 14px 2px;
+  border-color: var(--line);
+}
+
+.live-meta strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.meta-label {
+  color: #7d8790;
+  letter-spacing: .13em;
+}
+
+.voice-orb span {
+  background: var(--blue);
+}
+
+.question-composer input,
+.ai-dialogue-fields select,
+.ai-dialogue-fields input,
+.dialogue-setup-card select,
+.dialogue-setup-card textarea {
+  border: 1px solid #cfd7df;
+  background: #fff;
+  color: var(--ink);
+  border-radius: 3px;
+}
+
+.question-composer input {
+  padding: 13px 14px;
+}
+
+.question-composer input:focus,
+.ai-dialogue-fields select:focus,
+.ai-dialogue-fields input:focus,
+.dialogue-setup-card select:focus,
+.dialogue-setup-card textarea:focus {
+  outline: 0;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(51, 102, 153, .10);
+}
+
+.question-composer button {
+  border-radius: 3px;
+  background: var(--blue);
+  border-color: var(--blue);
+}
+
+.suggested-questions > p {
+  color: var(--blue);
+  letter-spacing: .12em;
+}
+
+.suggested-question-list {
+  gap: 9px;
+}
+
+.suggested-question-list button {
+  min-height: 72px;
+  border: 1px solid #d8dfe6;
+  background: #f8fafc;
+  border-radius: 3px;
+  color: #31363a;
+  padding: 11px 12px;
+  font-size: 11px;
+}
+
+.suggested-question-list button:hover:not(:disabled) {
+  border-color: rgba(51,102,153,.55);
+  background: var(--blue-soft);
+}
+
+.live-transcript-heading > span,
+.transcript-line span,
+.dialogue-transcript-line > span {
+  color: var(--blue);
+}
+
+.transcript.live-transcript,
+.dialogue-transcript {
+  border-color: #d8dfe6;
+  background: #f8fafc;
+  border-radius: 2px;
+}
+
+.live-transcript .transcript-line p,
+.dialogue-transcript-line p {
+  color: #343a40;
+  font-family: "Montserrat", "Avenir Next", Avenir, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+.transcript-line + .transcript-line {
+  padding-top: 14px;
+  border-top: 1px solid #e6eaee;
+}
+
+.agent-rail {
+  border-radius: 4px;
+  padding: 22px 16px 18px;
+  top: 24px;
+}
+
+.agent-rail-heading {
+  border-color: var(--line);
+}
+
+.rail-eyebrow {
+  color: #336699;
+  font-size: 9px;
+  letter-spacing: .14em;
+}
+
+.agent-rail h2 {
+  font-size: 22px;
+  font-weight: 650;
+}
+
+.agent-choice {
+  border-radius: 3px;
+  padding: 10px;
+}
+
+.agent-choice:hover:not(:disabled) {
+  background: #f3f7fa;
+  border-color: rgba(51, 102, 153, .25);
+}
+
+.agent-choice.active,
+.agent-choice.pending {
+  background: var(--blue-soft);
+  border-color: rgba(51, 102, 153, .44);
+}
+
+.agent-choice-copy strong {
+  color: #2e2e2e;
+  font-size: 12px;
+}
+
+.agent-choice.active .agent-choice-state,
+.agent-choice.pending .agent-choice-state {
+  color: var(--blue);
+}
+
+.rail-note {
+  border-color: var(--line);
+}
+
+footer {
+  border-color: var(--line);
+}
+
+footer p {
+  color: #818a92;
+  font-family: "Montserrat", "Avenir Next", Avenir, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+.error-block {
+  border-color: rgba(154,63,58,.25);
+  background: #fff8f7;
+  border-radius: 3px;
+}
+
+.global-mode-switch {
+  top: 20px;
+  right: 20px;
+  padding: 7px 8px 7px 12px;
+  background: rgba(255,255,255,.97);
+  border-color: var(--line);
+  border-radius: 3px;
+  box-shadow: 0 6px 18px rgba(35,31,32,.08);
+}
+
+.global-mode-switch span {
+  color: var(--ink);
+}
+
+.global-mode-switch button {
+  background: var(--blue);
+  border-radius: 3px;
+}
+
+/* AI Discussion mode receives the same PRMuseum visual system. */
+.dialogue-mode-shell {
+  background: #f4f6f8;
+  padding: clamp(20px, 3.5vw, 46px);
+}
+
+.dialogue-mode-topbar {
+  margin-bottom: 22px;
+  min-height: 58px;
+  align-items: center;
+}
+
+.dialogue-prmuseum-logo {
+  width: clamp(190px, 25vw, 280px);
+}
+
+.dialogue-mode-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+}
+
+.dialogue-mode-actions > span {
+  color: #336699;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.dialogue-mode-card {
+  gap: 24px;
+}
+
+.dialogue-stage,
+.dialogue-setup-card,
+.dialogue-transcript-section,
+.dialogue-running-controls {
+  border-radius: 4px;
+}
+
+.dialogue-stage {
+  padding: 38px 30px;
+}
+
+.dialogue-stage h1 {
+  font-weight: 650;
+}
+
+.dialogue-status {
+  color: var(--muted);
+}
+
+.dialogue-turn-count {
+  color: var(--blue);
+}
+
+.dialogue-setup-card > p,
+.dialogue-empty,
+.dialogue-transcript-heading span {
+  color: var(--muted);
+}
+
+.ai-dialogue-panel {
+  border-color: #d7e0e8;
+  background: #f7fafc;
+  border-radius: 3px;
+}
+
+.ai-dialogue-panel.active {
+  border-color: rgba(51,102,153,.42);
+  background: var(--blue-soft);
+}
+
+@media (max-width: 920px) {
+  body {
+    background: #f4f6f8;
+  }
+
+  .experience-layout {
+    grid-template-columns: minmax(0, 820px);
+  }
+
+  .agent-rail {
+    border-radius: 4px;
+  }
+}
+
+@media (max-width: 640px) {
+  .experience-shell {
+    padding: 0;
+    background: #fff;
+  }
+
+  .museum-card {
+    border-radius: 0;
+    border-width: 0 0 1px;
+    box-shadow: none;
+    padding: 24px 20px 32px;
+  }
+
+  .museum-mark {
+    margin-bottom: 28px;
+  }
+
+  .prmuseum-logo {
+    width: min(230px, 72vw);
+  }
+
+  .agent-rail {
+    border-radius: 0;
+    background: #f8fafc;
+  }
+
+  .global-mode-switch {
+    margin: 0;
+    padding: 10px 12px;
+    border-width: 0 0 1px;
+    border-radius: 0;
+  }
+
+  .dialogue-mode-shell {
+    padding: 16px 12px 24px;
+  }
+
+  .dialogue-mode-topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .dialogue-mode-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+
+/* v5.12 design token update */
+:root {
+  --heading: #336699;
+  --primary: #2ea3f2;
+  --secondary: #2f97e0;
+}
+
+html, body, button, input, select, textarea, a, p, div, span, small, strong, label {
+  font-family: "Montserrat", "Avenir Next", Avenir, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+h1, h2, h3, h4, h5, h6, .agent-rail h2, .dialogue-stage h1, .dialogue-setup-card h2 {
+  font-family: "Open Sans", "Montserrat", Arial, sans-serif;
+  color: var(--heading);
+}
+
+.eyebrow, .subtitle, .suggested-questions > p, .rail-eyebrow, .dialogue-mode-actions > span, .dialogue-turn-count, .live-transcript-heading > span, .transcript-line span, .dialogue-transcript-line > span, .agent-choice.active .agent-choice-state, .agent-choice.pending .agent-choice-state {
+  color: var(--heading);
+}
+
+.primary-button, .question-composer button, .global-mode-switch button {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+.primary-button:hover, .question-composer button:hover:not(:disabled), .global-mode-switch button:hover:not(:disabled) {
+  background: var(--secondary);
+  border-color: var(--secondary);
+}
+.secondary-button {
+  color: var(--heading);
+}
+.question-composer input:focus, .ai-dialogue-fields select:focus, .ai-dialogue-fields input:focus, .dialogue-setup-card select:focus, .dialogue-setup-card textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(46,163,242,.14);
+}
+.suggested-question-list button:hover:not(:disabled), .agent-choice:hover:not(:disabled), .agent-choice.active, .agent-choice.pending, .ai-dialogue-panel.active {
+  background: #eef8ff;
+}
+body, .intro, .live-transcript .transcript-line p, .dialogue-transcript-line p, .agent-choice-copy strong, .live-meta strong {
+  color: #2e2e2e;
+}
+
+
+/* v5.13 — Living Archives logo integration */
+.living-archives-logo {
+  display: block;
+  width: auto;
+  height: 36px;
+  max-width: 180px;
+  object-fit: contain;
+}
+
+.global-mode-switch {
+  gap: 12px;
+}
+
+.global-mode-switch img.living-archives-logo {
+  height: 30px;
+  max-width: 150px;
+}
+
+.dialogue-brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.dialogue-living-archives-logo {
+  height: 46px;
+  max-width: 240px;
+}
+
+@media (max-width: 640px) {
+  .global-mode-switch img.living-archives-logo {
+    height: 26px;
+    max-width: 120px;
+  }
+
+  .dialogue-brand-lockup {
+    width: 100%;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .dialogue-living-archives-logo {
+    height: 34px;
+    max-width: 42vw;
+  }
 }

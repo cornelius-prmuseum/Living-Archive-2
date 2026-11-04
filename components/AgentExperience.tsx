@@ -1368,7 +1368,7 @@ export function AgentExperience({
     <main className="experience-shell">
       <div className="experience-layout">
         <section className="museum-card" aria-live="polite">
-          <div className="museum-mark">Museum of Public Relations</div>
+          <div className="museum-mark"><img className="prmuseum-logo" src="/prmuseum-logo.png" alt="PRMuseum" /></div>
 
           <div
             className={`portrait-wrap ${isDisplayedSpeaking ? "speaking" : ""}`}
