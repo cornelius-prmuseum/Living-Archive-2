@@ -961,3 +961,88 @@ body, .agent-choice-copy strong, .question-composer input, .live-transcript .tra
 .small-note, .eyebrow, .years, .transcript-line span, .dialogue-transcript-line > span, body, .question-composer input, .agent-choice-copy strong, .dialogue-setup-card label span, .status-card strong, .dialogue-turn-count, .return-link, .agent-choice-state, .question-composer button, .secondary-button, .primary-button {
   font-family: "Montserrat", Arial, sans-serif;
 }
+
+
+/* v5.18 layout refinements */
+.museum-mark {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  margin-bottom: 28px;
+}
+
+.living-archives-logo {
+  display: block;
+  width: 34%;
+  max-width: 360px;
+  min-width: 240px;
+  height: auto;
+}
+
+.dialogue-mode-topbar {
+  align-items: flex-start;
+}
+
+.dialogue-topbar-brand {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  flex: 1;
+}
+
+.dialogue-living-archives-logo {
+  width: min(34vw, 360px);
+  max-width: 360px;
+  min-width: 220px;
+}
+
+.primary-button,
+.question-composer button,
+.global-mode-switch button {
+  color: #ffffff;
+}
+
+.primary-button svg,
+.question-composer button svg,
+.global-mode-switch button svg {
+  color: #ffffff;
+  stroke: currentColor;
+}
+
+.note-below-ask {
+  margin-top: 14px;
+}
+
+@media (max-width: 900px) {
+  .living-archives-logo {
+    width: 46%;
+    min-width: 200px;
+  }
+
+  .dialogue-living-archives-logo {
+    width: min(52vw, 300px);
+    min-width: 180px;
+  }
+}
+
+@media (max-width: 700px) {
+  .museum-mark {
+    justify-content: center;
+  }
+
+  .living-archives-logo {
+    width: min(82vw, 360px);
+    min-width: 0;
+  }
+
+  .dialogue-topbar-brand {
+    width: 100%;
+    order: -1;
+    justify-content: center;
+  }
+
+  .dialogue-living-archives-logo {
+    width: min(80vw, 340px);
+    min-width: 0;
+  }
+}

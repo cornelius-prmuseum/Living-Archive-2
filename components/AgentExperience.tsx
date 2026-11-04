@@ -1388,11 +1388,6 @@ export function AgentExperience({
           {screen === "ready" && (
             <div className="content-block">
               <p className="intro">{agent.intro}</p>
-              <p className="small-note">
-                Begin the conversation, then ask by voice or type. Suggested questions will appear once the conversation is connected. Conversations are limited to approximately {Math.round(sessionSeconds / 60)} minutes.
-              </p>
-
-
               <button className="primary-button" onClick={() => void startConversation()} disabled={noAgentsAvailable}>
                 <MicIcon /> Begin Conversation
               </button>
@@ -1405,6 +1400,10 @@ export function AgentExperience({
                 placeholder={`Type a question for ${agent.shortName}…`}
                 buttonLabel="Ask"
               />
+
+              <p className="small-note note-below-ask">
+                Begin the conversation, then ask by voice or type. Suggested questions will appear once the conversation is connected. Conversations are limited to approximately {Math.round(sessionSeconds / 60)} minutes.
+              </p>
             </div>
           )}
 
