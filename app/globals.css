@@ -1530,3 +1530,194 @@ body, .intro, .live-transcript .transcript-line p, .dialogue-transcript-line p, 
     max-width: 42vw;
   }
 }
+
+
+/* v5.14 — restore classic framed-card layout with Living Archives branding */
+body {
+  background:
+    radial-gradient(circle at 15% 10%, rgba(255,255,255,.90), transparent 34%),
+    linear-gradient(135deg, #ede5d6 0%, #f4efe4 48%, #e7dece 100%);
+  color: #2e2e2e;
+}
+
+.experience-shell {
+  min-height: 100svh;
+  padding: clamp(18px, 4vw, 48px);
+  display: grid;
+  place-items: center;
+  align-items: center;
+}
+
+.experience-layout {
+  width: min(1040px, 100%);
+  grid-template-columns: minmax(0, 760px) 236px;
+  gap: 22px;
+}
+
+.museum-card {
+  width: 100%;
+  background: rgba(255, 253, 248, .96);
+  border: 1px solid rgba(55, 47, 37, .18);
+  box-shadow: 0 30px 80px rgba(55, 47, 37, .16);
+  border-radius: 0;
+  padding: clamp(24px, 5vw, 54px);
+  position: relative;
+  overflow: hidden;
+}
+
+.museum-card::before {
+  content: "";
+  display: block;
+  position: absolute;
+  inset: 10px;
+  border: 1px solid rgba(46, 46, 46, .08);
+  pointer-events: none;
+}
+
+.museum-mark.living-archives-mark {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  margin: 0 0 28px;
+  min-height: 52px;
+}
+
+.main-living-archives-logo {
+  width: clamp(135px, 20vw, 205px);
+  height: auto;
+  max-width: 42%;
+  object-fit: contain;
+}
+
+.agent-rail {
+  background: rgba(255, 253, 248, .96);
+  border: 1px solid rgba(55, 47, 37, .18);
+  box-shadow: 0 18px 50px rgba(55, 47, 37, .11);
+  border-radius: 0;
+  padding: 20px 16px 16px;
+}
+
+.transcript.live-transcript,
+.dialogue-transcript,
+.suggested-question-list button,
+.question-composer input,
+.ai-dialogue-fields select,
+.ai-dialogue-fields input,
+.dialogue-setup-card select,
+.dialogue-setup-card textarea {
+  background: rgba(255, 253, 248, .72);
+}
+
+.global-mode-switch {
+  top: 18px;
+  left: 18px;
+  right: auto;
+  padding: 8px 10px;
+  background: rgba(255, 253, 248, .96);
+  border: 1px solid rgba(55, 47, 37, .18);
+  border-radius: 0;
+  box-shadow: 0 8px 30px rgba(55,47,37,.10);
+}
+
+.dialogue-mode-shell {
+  background:
+    radial-gradient(circle at 15% 10%, rgba(255,255,255,.90), transparent 34%),
+    linear-gradient(135deg, #ede5d6 0%, #f4efe4 48%, #e7dece 100%);
+}
+
+.dialogue-mode-topbar {
+  width: min(1120px, 100%);
+  margin: 0 auto 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.dialogue-mode-actions {
+  order: 1;
+}
+
+.dialogue-living-archives-logo {
+  order: 2;
+  width: clamp(145px, 18vw, 220px);
+  height: auto;
+  max-width: 36%;
+}
+
+.dialogue-stage,
+.dialogue-setup-card,
+.dialogue-transcript-section,
+.dialogue-running-controls,
+.dialogue-error {
+  background: rgba(255, 253, 248, .96);
+  border: 1px solid rgba(55, 47, 37, .18);
+  box-shadow: 0 18px 55px rgba(55,47,37,.10);
+  border-radius: 0;
+}
+
+@media (max-width: 920px) {
+  .experience-layout {
+    grid-template-columns: minmax(0, 760px);
+    justify-content: center;
+  }
+}
+
+@media (max-width: 640px) {
+  body,
+  .dialogue-mode-shell {
+    background:
+      linear-gradient(135deg, #ede5d6 0%, #f4efe4 50%, #e7dece 100%);
+  }
+
+  .experience-shell {
+    padding: 14px;
+    background: transparent;
+    display: block;
+  }
+
+  .museum-card {
+    min-height: calc(100svh - 28px);
+    border: 1px solid rgba(55, 47, 37, .18);
+    box-shadow: 0 18px 46px rgba(55, 47, 37, .14);
+    padding: 24px 20px 32px;
+  }
+
+  .museum-card::before {
+    display: block;
+    inset: 7px;
+  }
+
+  .museum-mark.living-archives-mark {
+    margin-bottom: 24px;
+    min-height: 44px;
+  }
+
+  .main-living-archives-logo {
+    width: min(170px, 48vw);
+    max-width: 52%;
+  }
+
+  .agent-rail {
+    border-radius: 0;
+    background: rgba(255,253,248,.96);
+  }
+
+  .global-mode-switch {
+    position: static;
+    margin: 0 0 10px;
+    border-radius: 0;
+  }
+
+  .dialogue-mode-topbar {
+    align-items: center;
+    flex-direction: row;
+  }
+
+  .dialogue-living-archives-logo {
+    width: min(160px, 43vw);
+    max-width: 44%;
+  }
+}
