@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { Conversation } from "@elevenlabs/client";
 import type { AgentSlug } from "@/lib/agents";
+import { useAuth } from "@/components/AuthGate";
 
 export type DialogueCommand = {
   id: number;
@@ -60,6 +61,7 @@ export function SecondaryDialogueSession({
   onStatus: (status: SecondaryDialogueStatus) => void;
   onError: (message: string) => void;
 }) {
+  const { authFetch } = useAuth();
   const sessionRef = useRef<any>(null);
   const readyRef = useRef(false);
   const armedRef = useRef(false);
@@ -159,7 +161,7 @@ export function SecondaryDialogueSession({
     async function start() {
       try {
         onStatus("fetching-token");
-        const response = await fetch(`/api/token?agent=${encodeURIComponent(slug)}`, { cache: "no-store" });
+        const response = await authFetch(`/api/token?agent=${encodeURIComponent(slug)}`, { cache: "no-store" });
         const data = (await response.json()) as { token?: string; error?: string };
         if (!response.ok || !data.token) {
           throw new Error(data.error || "Unable to create the second conversation token.");

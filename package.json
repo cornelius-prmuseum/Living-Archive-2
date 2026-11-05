@@ -1,6 +1,6 @@
 {
   "name": "prmuseum-historical-voice-app",
-  "version": "2.5.10",
+  "version": "2.6.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -13,7 +13,8 @@
     "@elevenlabs/react": "^1.15.2",
     "next": "^16.1.0",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "@supabase/supabase-js": "^2.119.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

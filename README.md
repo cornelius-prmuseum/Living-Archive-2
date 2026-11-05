@@ -21,3 +21,18 @@ Each historical figure has a question pool (currently about 20 questions). The U
 Before a conversation begins, clicking a historical figure simply selects that figure. During a live visitor conversation, clicking a different figure now creates a visible visitor request such as `I'd like to speak with Ivy Lee.` and sends that exact text to the active ElevenLabs agent. The normal ElevenLabs `transfer_to_agent` rules decide whether to transfer. The displayed portrait changes only after the transfer succeeds.
 
 Visitor switching deliberately uses ElevenLabs native `transfer_to_agent` again. The separate-session visitor handoff experiment from v5.6 is not part of this version. Spoken/typed transfer requests and portrait clicks share the same native transfer path.
+
+## v5.19 authentication and logging
+
+This build adds a Supabase email/password login/signup gate and an automatic Google Sheets visitor conversation log. See `AUTH-AND-GOOGLE-SHEETS-SETUP.md` before deployment.
+
+New required environment variables:
+
+```text
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=
+GOOGLE_SHEETS_WEBHOOK_URL=
+GOOGLE_SHEETS_WEBHOOK_SECRET=
+```
+
+The Google Apps Script source is included at `google-apps-script/Code.gs`.

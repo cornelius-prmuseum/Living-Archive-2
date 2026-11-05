@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAgentSlug } from "@/lib/agents";
+import { getAuthenticatedUser } from "@/lib/serverAuth";
 import {
   getAgentId,
   getDialogueAgentId,
@@ -10,6 +11,11 @@ import {
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
+  const user = await getAuthenticatedUser(request);
+  if (!user) {
+    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
+  }
+
   const apiKey = process.env.ELEVENLABS_API_KEY;
   const requestedAgent = request.nextUrl.searchParams.get("agent");
   const mode = request.nextUrl.searchParams.get("mode") === "dialogue" ? "dialogue" : "visitor";

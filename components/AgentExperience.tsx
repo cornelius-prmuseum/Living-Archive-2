@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useConversation } from "@elevenlabs/react";
 import { SecondaryDialogueSession, type DialogueCommand, type SecondaryDialogueStatus } from "@/components/SecondaryDialogueSession";
+import { useAuth } from "@/components/AuthGate";
 import {
   AGENTS,
   getPublicAgent,
@@ -164,6 +165,7 @@ export function AgentExperience({
   aiDialogueEnabled: boolean;
   aiDialogueMaxTurns: number;
 }) {
+  const { authFetch } = useAuth();
   const enabledAgents = useMemo(() => enabledAgentSlugs.filter((slug) => Boolean(AGENTS[slug])), [enabledAgentSlugs]);
   const initialAgent = useMemo(() => getPublicAgent(agentParam, enabledAgents), [agentParam, enabledAgents]);
   const [activeAgentSlug, setActiveAgentSlug] = useState<AgentSlug>(initialAgent.slug);
@@ -198,6 +200,11 @@ export function AgentExperience({
     noAgentsAvailable ? "No historical voice agents are currently enabled on the server." : "",
   );
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const conversationIdRef = useRef<string | null>(null);
+  const conversationStartedAtRef = useRef<number | null>(null);
+  const conversationStartedIsoRef = useRef<string | null>(null);
+  const conversationStartLoggedRef = useRef(false);
+  const conversationEndLoggedRef = useRef(false);
   const [textQuestion, setTextQuestion] = useState("");
   const [suggestionRotation, setSuggestionRotation] = useState(0);
   const [lastSuggestedQuestion, setLastSuggestedQuestion] = useState<string | null>(null);
@@ -335,7 +342,7 @@ export function AgentExperience({
     if (!clean) return "No active ElevenLabs Agent ID was provided.";
 
     try {
-      const response = await fetch(`/api/resolve-agent?agent_id=${encodeURIComponent(clean)}`, {
+      const response = await authFetch(`/api/resolve-agent?agent_id=${encodeURIComponent(clean)}`, {
         cache: "no-store",
       });
       const data = (await response.json()) as { slug?: string; error?: string };
@@ -350,7 +357,7 @@ export function AgentExperience({
       console.error("Unable to resolve active ElevenLabs agent", error);
       return "The PRMuseum display could not synchronize with the active agent.";
     }
-  }, [confirmActiveAgent, enabledAgents]);
+  }, [authFetch, confirmActiveAgent, enabledAgents]);
 
   const resolveTransferTarget = useCallback(async (
     sourceSlug: AgentSlug,
@@ -363,7 +370,7 @@ export function AgentExperience({
 
     try {
       if (directAgentId) {
-        const directResponse = await fetch(
+        const directResponse = await authFetch(
           `/api/resolve-agent?agent_id=${encodeURIComponent(directAgentId)}`,
           { cache: "no-store" },
         );
@@ -382,7 +389,7 @@ export function AgentExperience({
 
       if (!Number.isInteger(agentNumber) || agentNumber < 0) return null;
 
-      const response = await fetch(
+      const response = await authFetch(
         `/api/resolve-transfer?source=${encodeURIComponent(sourceSlug)}&agent_number=${agentNumber}`,
         { cache: "no-store" },
       );
@@ -398,7 +405,7 @@ export function AgentExperience({
       console.error("Unable to resolve transfer destination", error);
       return null;
     }
-  }, [enabledAgents]);
+  }, [authFetch, enabledAgents]);
 
   const scheduleAlignedTranscript = useCallback((payload: unknown, speakerSlugOverride?: AgentSlug) => {
     const alignment = normalizeAudioAlignment(payload);
@@ -470,6 +477,45 @@ export function AgentExperience({
     }
   }, [clearAlignmentTimers]);
 
+  const postConversationLog = useCallback(async (event: "start" | "end") => {
+    const id = conversationIdRef.current;
+    const startedAtMs = conversationStartedAtRef.current;
+    const startedAtIso = conversationStartedIsoRef.current;
+    if (!id || !startedAtMs || !startedAtIso) return;
+
+    if (event === "start" && conversationStartLoggedRef.current) return;
+    if (event === "end" && conversationEndLoggedRef.current) return;
+
+    if (event === "start") conversationStartLoggedRef.current = true;
+    if (event === "end") conversationEndLoggedRef.current = true;
+
+    const durationSeconds = event === "end"
+      ? Math.max(0, Math.round((Date.now() - startedAtMs) / 1000))
+      : 0;
+
+    try {
+      const response = await authFetch("/api/conversation-log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event,
+          conversationId: id,
+          startedAt: startedAtIso,
+          durationSeconds,
+        }),
+        cache: "no-store",
+        keepalive: event === "end",
+      });
+
+      if (!response.ok) {
+        const message = await response.text();
+        console.warn("Conversation log update failed", response.status, message);
+      }
+    } catch (logError) {
+      console.warn("Conversation log update failed", logError);
+    }
+  }, [authFetch]);
+
   const conversation = useConversation({
     clientTools: {
       // Legacy compatibility only. Native transfer_to_agent events are the
@@ -484,6 +530,7 @@ export function AgentExperience({
       setErrorMessage("");
     },
     onDisconnect: () => {
+      void postConversationLog("end");
       transferTargetByCallRef.current.clear();
       transferAudioSpeakerSlugRef.current = null;
       expectedTransferSlugRef.current = null;
@@ -615,6 +662,7 @@ export function AgentExperience({
       setTranscript((previous) => mergeTranscript(previous, normalized));
     },
     onError: (error) => {
+      void postConversationLog("end");
       console.error(error);
       if (transferRequestTimerRef.current !== null) {
         window.clearTimeout(transferRequestTimerRef.current);
@@ -670,10 +718,11 @@ export function AgentExperience({
     } catch (error) {
       console.error("Error ending session", error);
     } finally {
+      void postConversationLog("end");
       setPendingTransferSlug(null);
       setScreen("finished");
     }
-  }, [conversation]);
+  }, [conversation, postConversationLog]);
 
   const requestGracefulClose = useCallback(() => {
     if (closePromptSentRef.current || conversation.status !== "connected") return;
@@ -704,6 +753,14 @@ export function AgentExperience({
     }
   }, [conversation, endNow]);
 
+  useEffect(() => {
+    const handlePageHide = () => {
+      void postConversationLog("end");
+    };
+    window.addEventListener("pagehide", handlePageHide);
+    return () => window.removeEventListener("pagehide", handlePageHide);
+  }, [postConversationLog]);
+
   const startConversation = useCallback(async (initialQuestion?: string) => {
     if (noAgentsAvailable) return;
 
@@ -711,6 +768,11 @@ export function AgentExperience({
     setTranscript(initialQuestion?.trim() ? [{ role: "visitor", text: initialQuestion.trim() }] : []);
     setRemaining(sessionSeconds);
     setConversationId(null);
+    conversationIdRef.current = null;
+    conversationStartedAtRef.current = null;
+    conversationStartedIsoRef.current = null;
+    conversationStartLoggedRef.current = false;
+    conversationEndLoggedRef.current = false;
     transferTargetByCallRef.current.clear();
     transferAudioSpeakerSlugRef.current = null;
     expectedTransferSlugRef.current = null;
@@ -743,7 +805,7 @@ export function AgentExperience({
     try {
       await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      const response = await fetch(`/api/token?agent=${encodeURIComponent(activeAgentSlug)}`, {
+      const response = await authFetch(`/api/token?agent=${encodeURIComponent(activeAgentSlug)}`, {
         cache: "no-store",
       });
       const data = (await response.json()) as {
@@ -757,7 +819,13 @@ export function AgentExperience({
       }
 
       const id = await conversation.startSession({ conversationToken: data.token });
-      setConversationId(typeof id === "string" ? id : data.conversationId ?? null);
+      const resolvedConversationId = typeof id === "string" ? id : data.conversationId ?? null;
+      const startedAt = new Date();
+      setConversationId(resolvedConversationId);
+      conversationIdRef.current = resolvedConversationId;
+      conversationStartedAtRef.current = startedAt.getTime();
+      conversationStartedIsoRef.current = startedAt.toISOString();
+      if (resolvedConversationId) void postConversationLog("start");
 
       if (initialQuestion?.trim()) {
         conversation.sendUserMessage(initialQuestion.trim());
@@ -771,7 +839,7 @@ export function AgentExperience({
       );
       setScreen("error");
     }
-  }, [activeAgentSlug, conversation, noAgentsAvailable, resetSessionRefs, sessionSeconds]);
+  }, [activeAgentSlug, authFetch, conversation, noAgentsAvailable, postConversationLog, resetSessionRefs, sessionSeconds]);
 
   const sendTextQuestion = useCallback(async (question: string) => {
     const clean = question.trim();
@@ -1388,7 +1456,7 @@ export function AgentExperience({
           {screen === "ready" && (
             <div className="content-block">
               <p className="intro">{agent.intro}</p>
-              <button className="primary-button" onClick={() => void startConversation()} disabled={noAgentsAvailable}>
+              <button className="primary-button begin-conversation-button" onClick={() => void startConversation()} disabled={noAgentsAvailable}>
                 <MicIcon /> Begin Conversation
               </button>
 

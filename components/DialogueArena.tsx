@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Conversation } from "@elevenlabs/client";
 import { AGENTS, type AgentSlug } from "@/lib/agents";
+import { useAuth } from "@/components/AuthGate";
 
 type TranscriptEntry = {
   slug: AgentSlug;
@@ -348,7 +349,7 @@ export function DialogueArena({
   };
 
   const startOneSession = async (slug: AgentSlug) => {
-    const response = await fetch(`/api/token?agent=${encodeURIComponent(slug)}&mode=dialogue`, { cache: "no-store" });
+    const response = await authFetch(`/api/token?agent=${encodeURIComponent(slug)}&mode=dialogue`, { cache: "no-store" });
     const data = await response.json() as { token?: string; error?: string };
     if (!response.ok || !data.token) throw new Error(data.error || `Unable to start ${AGENTS[slug].name}.`);
 

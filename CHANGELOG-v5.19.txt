@@ -1,0 +1,15 @@
+Living Archives v5.19
+
+- Added branded login and signup gate.
+- Login: email + password.
+- Signup: first name, last name, email, create password, confirm password.
+- Added optional PRMuseum future interactive experiences checkbox.
+- Added required privacy copy to login/signup screen.
+- Uses Supabase Auth; passwords are not stored in application code.
+- Added authentication to ElevenLabs token/transfer API routes.
+- Added live Google Sheets visitor conversation log.
+- Sheet row appears when conversation starts and duration is updated when it ends.
+- Logged fields: first name, last name, email, conversation date/time, conversation duration, ElevenLabs Conversation ID.
+- Added Google Apps Script webhook code and setup instructions.
+- Added a line of spacing above the Begin Conversation button.
+- Added supplied Living Archives logo to login/signup screen.

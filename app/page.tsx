@@ -1,4 +1,5 @@
 import { HistoricalVoiceApp } from "@/components/HistoricalVoiceApp";
+import { AuthGate } from "@/components/AuthGate";
 import {
   getAiDialogueEnabled,
   getAiDialogueMaxTurns,
@@ -22,13 +23,15 @@ export default async function Home({ searchParams }: PageProps) {
   const aiDialogueMaxTurns = getAiDialogueMaxTurns();
 
   return (
-    <HistoricalVoiceApp
-      agentParam={agentParam}
-      returnUrl={returnUrl}
-      enabledAgentSlugs={enabledAgentSlugs}
-      dialogueAgentSlugs={dialogueAgentSlugs}
-      aiDialogueEnabled={aiDialogueEnabled}
-      aiDialogueMaxTurns={aiDialogueMaxTurns}
-    />
+    <AuthGate>
+      <HistoricalVoiceApp
+        agentParam={agentParam}
+        returnUrl={returnUrl}
+        enabledAgentSlugs={enabledAgentSlugs}
+        dialogueAgentSlugs={dialogueAgentSlugs}
+        aiDialogueEnabled={aiDialogueEnabled}
+        aiDialogueMaxTurns={aiDialogueMaxTurns}
+      />
+    </AuthGate>
   );
 }

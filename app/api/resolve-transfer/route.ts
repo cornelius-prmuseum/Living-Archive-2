@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getAuthenticatedUser } from "@/lib/serverAuth";
 import { isAgentSlug } from "@/lib/agents";
 import {
   getAgentId,
@@ -88,6 +89,10 @@ function getTargetAgentId(rule: unknown): string | null {
 }
 
 export async function GET(request: NextRequest) {
+  const user = await getAuthenticatedUser(request);
+  if (!user) {
+    return NextResponse.json({ error: "Authentication required." }, { status: 401 });
+  }
   const apiKey = process.env.ELEVENLABS_API_KEY;
   const source = request.nextUrl.searchParams.get("source");
   const agentNumberRaw = request.nextUrl.searchParams.get("agent_number") ?? "";
