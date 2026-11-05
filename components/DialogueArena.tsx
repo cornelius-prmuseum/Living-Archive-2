@@ -81,6 +81,7 @@ export function DialogueArena({
   maxTurns: number;
   onExit: () => void;
 }) {
+  const { authFetch } = useAuth();
   const [speakerA, setSpeakerA] = useState<AgentSlug>(enabledAgentSlugs[0] ?? "bernays");
   const [speakerB, setSpeakerB] = useState<AgentSlug>(enabledAgentSlugs.find((slug) => slug !== (enabledAgentSlugs[0] ?? "bernays")) ?? "arthur-page");
   const [topic, setTopic] = useState("");
