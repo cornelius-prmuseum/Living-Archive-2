@@ -117,3 +117,35 @@ After adding the four new authentication/logging variables, redeploy the Vercel 
 ### Spreadsheet timezone
 
 Google Sheets displays the logged ISO date/time using the spreadsheet's timezone. For New York museum operations, set **File → Settings → Time zone** to **(GMT-05:00) Eastern Time / America-New_York** so the conversation start time appears locally.
+
+
+## Troubleshooting: login works but the Sheet stays empty
+
+Use this exact order:
+
+1. In Apps Script, open **Project Settings → Script Properties** and verify both properties exist:
+   - `SPREADSHEET_ID` = only the ID between `/d/` and `/edit` in the Google Sheet URL.
+   - `LOG_SECRET` = exactly the same string as Vercel `GOOGLE_SHEETS_WEBHOOK_SECRET`.
+2. Open **Deploy → Manage deployments**. The deployment must be a **Web app**, **Execute as: Me**, **Who has access: Anyone**. A setting that requires a Google login will not work for the Vercel server.
+3. Copy the deployed URL ending in `/exec` into Vercel `GOOGLE_SHEETS_WEBHOOK_URL`. Do not use the editor URL, spreadsheet URL, deployment ID alone, or `/dev` URL.
+4. After changing Apps Script code, use **Deploy → Manage deployments → Edit → New version → Deploy**. Saving the editor does not update an existing deployed version.
+5. Redeploy the Vercel project after changing Vercel environment variables. Make sure the variables are available to the **Production** deployment.
+6. With this v5.19.2 Apps Script deployed, open the `/exec` URL in an incognito browser. You should see JSON similar to:
+
+```json
+{"ok":true,"service":"PRMuseum Living Archives conversation log","spreadsheetConfigured":true,"secretConfigured":true}
+```
+
+If you see a Google sign-in page, an access-denied page, or HTML instead of JSON, the web-app access setting or URL is wrong.
+
+### Where to look for the failure
+
+- **Apps Script → Executions:** starting a Living Archives conversation should create a `doPost` execution.
+  - No execution = Vercel is not reaching this deployment (usually URL/access/environment variable).
+  - Failed execution = click it to see the exact Google error.
+- **Vercel → Project → Logs:** search for `/api/conversation-log`. v5.19.2 logs whether Apps Script returned HTML, invalid JSON, a secret/configuration error, or a Google execution error.
+
+
+## v5.19.3: Personalities column
+
+Replace the deployed Apps Script `Code.gs` with the version in this package and deploy a **new web app version**. The script automatically adds a seventh `Personality(ies)` column to an existing `Conversation Log` sheet. It records the starting historical figure and updates the same row if the visitor transfers to additional figures. Existing columns remain in place, including the ElevenLabs Conversation ID in column F.

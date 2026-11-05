@@ -6,7 +6,22 @@ const HEADERS = [
   'Conversation Date & Time',
   'Conversation Duration',
   'ElevenLabs Conversation ID',
+  'Personality(ies)',
 ];
+
+
+function doGet() {
+  const props = PropertiesService.getScriptProperties();
+  const spreadsheetId = props.getProperty('SPREADSHEET_ID');
+  const expectedSecret = props.getProperty('LOG_SECRET');
+
+  return jsonResponse({
+    ok: Boolean(spreadsheetId && expectedSecret),
+    service: 'PRMuseum Living Archives conversation log',
+    spreadsheetConfigured: Boolean(spreadsheetId),
+    secretConfigured: Boolean(expectedSecret),
+  });
+}
 
 function doPost(e) {
   const lock = LockService.getScriptLock();
@@ -40,35 +55,60 @@ function doPost(e) {
     const existingRow = findConversationRow(sheet, conversationId);
     const durationSeconds = Math.max(0, Number(data.durationSeconds || 0));
     const durationValue = durationSeconds / 86400;
+    const personalities = Array.isArray(data.personalities)
+      ? data.personalities.map(safeCell).filter(Boolean).join(', ')
+      : safeCell(data.personalities);
 
     if (data.event === 'start') {
       if (!existingRow) {
         const row = sheet.getLastRow() + 1;
-        sheet.getRange(row, 1, 1, 6).setValues([[
+        sheet.getRange(row, 1, 1, 7).setValues([[
           safeCell(data.firstName),
           safeCell(data.lastName),
           safeCell(data.email),
           new Date(data.conversationDateTime),
           '',
           conversationId,
+          personalities,
         ]]);
         sheet.getRange(row, 4).setNumberFormat('m/d/yyyy h:mm:ss AM/PM');
         sheet.getRange(row, 5).setNumberFormat('[h]:mm:ss');
+      } else if (personalities) {
+        sheet.getRange(existingRow, 7).setValue(personalities);
+      }
+    } else if (data.event === 'update') {
+      if (!existingRow) {
+        const row = sheet.getLastRow() + 1;
+        sheet.getRange(row, 1, 1, 7).setValues([[
+          safeCell(data.firstName),
+          safeCell(data.lastName),
+          safeCell(data.email),
+          new Date(data.conversationDateTime),
+          '',
+          conversationId,
+          personalities,
+        ]]);
+        sheet.getRange(row, 4).setNumberFormat('m/d/yyyy h:mm:ss AM/PM');
+        sheet.getRange(row, 5).setNumberFormat('[h]:mm:ss');
+      } else {
+        sheet.getRange(existingRow, 7).setValue(personalities);
       }
     } else if (data.event === 'end') {
       const row = existingRow || sheet.getLastRow() + 1;
       if (!existingRow) {
-        sheet.getRange(row, 1, 1, 6).setValues([[
+        sheet.getRange(row, 1, 1, 7).setValues([[
           safeCell(data.firstName),
           safeCell(data.lastName),
           safeCell(data.email),
           new Date(data.conversationDateTime),
           durationValue,
           conversationId,
+          personalities,
         ]]);
         sheet.getRange(row, 4).setNumberFormat('m/d/yyyy h:mm:ss AM/PM');
       } else {
         sheet.getRange(row, 5).setValue(durationValue);
+        sheet.getRange(row, 7).setValue(personalities);
       }
       sheet.getRange(row, 5).setNumberFormat('[h]:mm:ss');
     } else {
@@ -90,6 +130,13 @@ function ensureHeader(sheet) {
     sheet.getRange(1, 1, 1, HEADERS.length).setFontWeight('bold');
     sheet.setFrozenRows(1);
     sheet.autoResizeColumns(1, HEADERS.length);
+    return;
+  }
+
+  const currentHeaders = sheet.getRange(1, 1, 1, HEADERS.length).getValues()[0];
+  if (currentHeaders[6] !== 'Personality(ies)') {
+    sheet.getRange(1, 7).setValue('Personality(ies)').setFontWeight('bold');
+    sheet.autoResizeColumn(7);
   }
 }
 

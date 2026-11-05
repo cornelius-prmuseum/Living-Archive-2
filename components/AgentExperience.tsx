@@ -205,6 +205,7 @@ export function AgentExperience({
   const conversationStartedIsoRef = useRef<string | null>(null);
   const conversationStartLoggedRef = useRef(false);
   const conversationEndLoggedRef = useRef(false);
+  const conversationPersonalitiesRef = useRef<Set<AgentSlug>>(new Set([initialAgent.slug]));
   const [textQuestion, setTextQuestion] = useState("");
   const [suggestionRotation, setSuggestionRotation] = useState(0);
   const [lastSuggestedQuestion, setLastSuggestedQuestion] = useState<string | null>(null);
@@ -477,7 +478,7 @@ export function AgentExperience({
     }
   }, [clearAlignmentTimers]);
 
-  const postConversationLog = useCallback(async (event: "start" | "end") => {
+  const postConversationLog = useCallback(async (event: "start" | "update" | "end") => {
     const id = conversationIdRef.current;
     const startedAtMs = conversationStartedAtRef.current;
     const startedAtIso = conversationStartedIsoRef.current;
@@ -502,6 +503,7 @@ export function AgentExperience({
           conversationId: id,
           startedAt: startedAtIso,
           durationSeconds,
+          personalities: Array.from(conversationPersonalitiesRef.current).map((slug: AgentSlug) => AGENTS[slug].name),
         }),
         cache: "no-store",
         keepalive: event === "end",
@@ -515,6 +517,15 @@ export function AgentExperience({
       console.warn("Conversation log update failed", logError);
     }
   }, [authFetch]);
+
+  useEffect(() => {
+    if (!conversationPersonalitiesRef.current.has(activeAgentSlug)) {
+      conversationPersonalitiesRef.current.add(activeAgentSlug);
+      if (conversationIdRef.current && conversationStartLoggedRef.current) {
+        void postConversationLog("update");
+      }
+    }
+  }, [activeAgentSlug, postConversationLog]);
 
   const conversation = useConversation({
     clientTools: {
@@ -773,6 +784,7 @@ export function AgentExperience({
     conversationStartedIsoRef.current = null;
     conversationStartLoggedRef.current = false;
     conversationEndLoggedRef.current = false;
+    conversationPersonalitiesRef.current = new Set([activeAgentSlugRef.current]);
     transferTargetByCallRef.current.clear();
     transferAudioSpeakerSlugRef.current = null;
     expectedTransferSlugRef.current = null;
