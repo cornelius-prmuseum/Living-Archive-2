@@ -518,15 +518,6 @@ export function AgentExperience({
     }
   }, [authFetch]);
 
-  useEffect(() => {
-    if (!conversationPersonalitiesRef.current.has(activeAgentSlug)) {
-      conversationPersonalitiesRef.current.add(activeAgentSlug);
-      if (conversationIdRef.current && conversationStartLoggedRef.current) {
-        void postConversationLog("update");
-      }
-    }
-  }, [activeAgentSlug, postConversationLog]);
-
   const conversation = useConversation({
     clientTools: {
       // Legacy compatibility only. Native transfer_to_agent events are the
@@ -626,6 +617,10 @@ export function AgentExperience({
         // early receiving-agent audio to the target. Do not reset alignment here:
         // the receiving agent's First Message may already be streaming.
         confirmActiveAgent(target, false);
+        if (!conversationPersonalitiesRef.current.has(target)) {
+          conversationPersonalitiesRef.current.add(target);
+          void postConversationLog("update");
+        }
         transferAudioSpeakerSlugRef.current = null;
         expectedTransferSlugRef.current = null;
       } else {

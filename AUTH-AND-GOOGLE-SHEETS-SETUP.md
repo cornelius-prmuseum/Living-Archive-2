@@ -146,6 +146,5 @@ If you see a Google sign-in page, an access-denied page, or HTML instead of JSON
 - **Vercel → Project → Logs:** search for `/api/conversation-log`. v5.19.2 logs whether Apps Script returned HTML, invalid JSON, a secret/configuration error, or a Google execution error.
 
 
-## v5.19.3: Personalities column
-
-Replace the deployed Apps Script `Code.gs` with the version in this package and deploy a **new web app version**. The script automatically adds a seventh `Personality(ies)` column to an existing `Conversation Log` sheet. It records the starting historical figure and updates the same row if the visitor transfers to additional figures. Existing columns remain in place, including the ElevenLabs Conversation ID in column F.
+## Personality(ies) column
+The Apps Script adds a seventh `Personality(ies)` column and updates it when the visitor successfully transfers to another historical figure.
