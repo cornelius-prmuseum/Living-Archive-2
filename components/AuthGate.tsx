@@ -204,7 +204,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
             <h1>Begin your conversation with the Living Archives™</h1>
             <p>
               The Living Archives™ is a new interactive AI experience from the Museum of Public Relations,
-              based on the ideas and writings of Edward Bernays.
+              based on the ideas and writings of notable individuals who shaped the field of public relations.
             </p>
             <p>Please enter your login or sign-up below to begin.</p>
           </header>
