@@ -148,3 +148,57 @@ If you see a Google sign-in page, an access-denied page, or HTML instead of JSON
 
 ## Personality(ies) column
 The Apps Script adds a seventh `Personality(ies)` column and updates it when the visitor successfully transfers to another historical figure.
+
+## Museum Staff and Educator access whitelists
+
+Access is assigned after Supabase login using the signed-in email address. Add these server-only Vercel environment variables:
+
+```text
+PRMUSEUM_MUSEUM_STAFF_EMAILS=staff1@prmuseum.org,staff2@prmuseum.org
+PRMUSEUM_EDUCATOR_EMAILS=teacher@example.edu,professor@example.edu
+```
+
+Email matching is case-insensitive. Museum Staff takes precedence if an address appears in both lists.
+
+### Current access behavior
+
+- **Standard:** Edward Bernays, Ivy Lee, Walter Lippmann, Arthur W. Page.
+- **Educator:** currently the same persona set as Standard, but with an independently configurable conversation limit. You can later change `PRMUSEUM_EDUCATOR_ENABLED_AGENTS` without changing code.
+- **Museum Staff:** Standard figures plus Inez Y. Kaiser, Marilyn Laurie, Doris Fleischman, Museum Docent, and the Historic Roundtable.
+
+The app enforces these permissions on the server token/transfer routes as well as in the interface.
+
+### Role-specific conversation limits
+
+Set values in seconds:
+
+```text
+PRMUSEUM_STANDARD_SESSION_SECONDS=3600
+PRMUSEUM_EDUCATOR_SESSION_SECONDS=5400
+PRMUSEUM_MUSEUM_STAFF_SESSION_SECONDS=7200
+```
+
+If a role-specific value is omitted, it falls back to the Standard limit. `NEXT_PUBLIC_SESSION_SECONDS` remains a legacy fallback for the Standard limit.
+
+### Museum Staff personas
+
+Configure the additional persona IDs:
+
+```text
+ELEVENLABS_AGENT_INEZ_KAISER=
+ELEVENLABS_AGENT_MARILYN_LAURIE=
+ELEVENLABS_AGENT_DORIS_FLEISCHMAN=
+ELEVENLABS_AGENT_MUSEUM_DOCENT=
+```
+
+If your password-protected preview used separate ElevenLabs copies for the original four figures, you can preserve that preview transfer/tool setup by setting the optional `ELEVENLABS_MUSEUM_STAFF_AGENT_*` variables from `.env.example`. When those are absent, Museum Staff falls back to the standard agent ID for that figure.
+
+### Historic Roundtable
+
+The Historic Roundtable uses the existing two-independent-session implementation and is only returned to Museum Staff accounts. Keep:
+
+```text
+PRMUSEUM_AI_DIALOGUE_ENABLED=true
+```
+
+Then configure at least two dialogue-agent IDs. Museum Docent is intentionally excluded from the Roundtable speaker list. The staff-specific dialogue variables can point to your existing preview dialogue copies; otherwise the app falls back to the normal `ELEVENLABS_DIALOGUE_AGENT_*` IDs.

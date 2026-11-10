@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAgentSlug } from "@/lib/agents";
 import { getAuthenticatedUser } from "@/lib/serverAuth";
+import { canUserAccessAgent, getAccessRole } from "@/lib/accessControl";
 import {
-  getAgentId,
-  getDialogueAgentId,
-  isAgentEnabled,
-  isDialogueAgentEnabled,
+  getAgentIdForRole,
+  getDialogueAgentIdForRole,
 } from "@/lib/serverAgents";
 
 export const dynamic = "force-dynamic";
@@ -24,16 +23,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unknown historical figure." }, { status: 400 });
   }
 
-  const enabled = mode === "dialogue"
-    ? isDialogueAgentEnabled(requestedAgent)
-    : isAgentEnabled(requestedAgent);
-  if (!enabled) {
-    return NextResponse.json({ error: "That historical figure is not currently available in this mode." }, { status: 404 });
+  if (!canUserAccessAgent(user, requestedAgent, mode)) {
+    return NextResponse.json({ error: "That historical figure is not available for this account." }, { status: 403 });
   }
 
+  const role = getAccessRole(user);
   const agentId = mode === "dialogue"
-    ? getDialogueAgentId(requestedAgent)
-    : getAgentId(requestedAgent);
+    ? getDialogueAgentIdForRole(requestedAgent, role)
+    : getAgentIdForRole(requestedAgent, role);
 
   if (!apiKey || !agentId) {
     return NextResponse.json(

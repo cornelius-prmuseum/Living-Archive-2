@@ -495,8 +495,8 @@ export function DialogueArena({
         );
       }, 250);
     } catch (err) {
-      console.error("Unable to start AI discussion", err);
-      setError(err instanceof Error ? err.message : "Unable to start the AI discussion.");
+      console.error("Unable to start Historic Roundtable", err);
+      setError(err instanceof Error ? err.message : "Unable to start the Historic Roundtable.");
       await endAllSessions();
     }
   };
@@ -521,7 +521,7 @@ export function DialogueArena({
             <img className="portrait" src={portraitAgent.portrait} alt={portraitAgent.name} />
             {activeSpeaker && <span className="status-dot" />}
           </div>
-          <p className="eyebrow">{activeSpeaker ? "Currently speaking" : "AI discussion"}</p>
+          <p className="eyebrow">{activeSpeaker ? "Currently speaking" : "Historic Roundtable"}</p>
           <h1>{portraitAgent.name}</h1>
           <p className="years">{portraitAgent.years}</p>
           <p className="subtitle">{portraitAgent.subtitle}</p>
@@ -531,7 +531,7 @@ export function DialogueArena({
 
         {!running ? (
           <form className="dialogue-setup-card" onSubmit={startDiscussion}>
-            <h2>Historical Roundtable</h2>
+            <h2>Historic Roundtable</h2>
             <p>Two independent ElevenLabs agents stay connected at the same time. The app relays each completed response to the other speaker.</p>
             <div className="dialogue-pair-grid">
               <label>

@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/serverAuth";
+import { canUserAccessAgent, getAccessRole } from "@/lib/accessControl";
 import { isAgentSlug } from "@/lib/agents";
 import {
-  getAgentId,
+  getAgentIdForRole,
   getAgentSlugById,
-  isAgentEnabled,
 } from "@/lib/serverAgents";
 
 export const dynamic = "force-dynamic";
@@ -98,7 +98,7 @@ export async function GET(request: NextRequest) {
   const agentNumberRaw = request.nextUrl.searchParams.get("agent_number") ?? "";
   const agentNumber = Number(agentNumberRaw);
 
-  if (!isAgentSlug(source) || !isAgentEnabled(source)) {
+  if (!isAgentSlug(source) || !canUserAccessAgent(user, source, "visitor")) {
     return NextResponse.json({ error: "Unknown or disabled source agent." }, { status: 400 });
   }
 
@@ -106,7 +106,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Invalid transfer destination number." }, { status: 400 });
   }
 
-  const sourceAgentId = getAgentId(source);
+  const role = getAccessRole(user);
+  const sourceAgentId = getAgentIdForRole(source, role);
   if (!apiKey || !sourceAgentId) {
     return NextResponse.json({ error: "Agent configuration is unavailable." }, { status: 503 });
   }
@@ -135,7 +136,7 @@ export async function GET(request: NextRequest) {
     const targetAgentId = getTargetAgentId(rule);
     const slug = targetAgentId ? getAgentSlugById(targetAgentId) : null;
 
-    if (!slug || !isAgentEnabled(slug)) {
+    if (!slug || !canUserAccessAgent(user, slug, "visitor")) {
       return NextResponse.json(
         { error: "The transfer destination is not mapped to an enabled PRMuseum agent." },
         { status: 404 },

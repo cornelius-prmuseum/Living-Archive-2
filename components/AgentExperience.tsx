@@ -116,6 +116,10 @@ function inferRequestedTransferSlug(
     "ivy-lee": ["ivy lee", "ivy", "mr. lee", "lee"],
     lippmann: ["walter lippmann", "lippmann"],
     "arthur-page": ["arthur w. page", "arthur page", "mr. page", "page"],
+    "inez-kaiser": ["inez y. kaiser", "inez kaiser", "inez", "kaiser"],
+    "marilyn-laurie": ["marilyn laurie", "marilyn", "laurie"],
+    "doris-fleischman": ["doris fleischman", "doris", "fleischman", "fleishman"],
+    "museum-docent": ["museum docent", "the docent", "docent"],
   };
 
   const candidates = enabledSlugs.filter((slug) => slug !== currentSlug);
@@ -158,12 +162,14 @@ export function AgentExperience({
   enabledAgentSlugs,
   aiDialogueEnabled,
   aiDialogueMaxTurns,
+  sessionSeconds,
 }: {
   agentParam: string | null;
   returnUrl: string | null;
   enabledAgentSlugs: AgentSlug[];
   aiDialogueEnabled: boolean;
   aiDialogueMaxTurns: number;
+  sessionSeconds: number;
 }) {
   const { authFetch } = useAuth();
   const enabledAgents = useMemo(() => enabledAgentSlugs.filter((slug) => Boolean(AGENTS[slug])), [enabledAgentSlugs]);
@@ -187,11 +193,6 @@ export function AgentExperience({
   const expectedTransferSlugRef = useRef<AgentSlug | null>(null);
   const transferRequestTimerRef = useRef<number | null>(null);
   const noAgentsAvailable = enabledAgents.length === 0;
-
-  const configuredSeconds = Number(process.env.NEXT_PUBLIC_SESSION_SECONDS || 600);
-  const sessionSeconds = Number.isFinite(configuredSeconds) && configuredSeconds >= 60
-    ? Math.floor(configuredSeconds)
-    : 600;
 
   const [screen, setScreen] = useState<ScreenState>(noAgentsAvailable ? "error" : "ready");
   const [remaining, setRemaining] = useState(sessionSeconds);
