@@ -55,6 +55,38 @@ export function AuthGate({ children }: { children: ReactNode }) {
     void (async () => {
       try {
         try {
+          // Reviewer links can use the existing home route so they do not depend
+          // on a separate /review page making it into the deployment.
+          // Preferred format: https://living-archives.vercel.app/#review=<key>
+          const hash = window.location.hash.slice(1).trim();
+          let reviewerKey = "";
+          if (hash.startsWith("review=")) {
+            reviewerKey = decodeURIComponent(hash.slice("review=".length));
+          } else if (hash.startsWith("reviewer=")) {
+            reviewerKey = decodeURIComponent(hash.slice("reviewer=".length));
+          }
+
+          if (reviewerKey) {
+            // Remove the secret from the visible URL/history before sending it to
+            // our same-origin API endpoint.
+            window.history.replaceState(null, "", "/");
+            const establishResponse = await fetch("/api/reviewer-session", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ key: reviewerKey }),
+              cache: "no-store",
+              credentials: "same-origin",
+            });
+            const establishData = await establishResponse.json().catch(() => ({})) as { error?: string };
+            if (!establishResponse.ok) {
+              throw new Error(establishData.error || "Unable to open reviewer access.");
+            }
+            if (!active) return;
+            setReviewer(true);
+            setLoading(false);
+            return;
+          }
+
           const reviewerResponse = await fetch("/api/reviewer-session", { cache: "no-store" });
           if (reviewerResponse.ok) {
             const reviewerData = await reviewerResponse.json() as { reviewer?: boolean };
@@ -66,7 +98,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
             }
           }
         } catch (reviewerError) {
-          console.warn("Unable to check reviewer session; continuing with normal login.", reviewerError);
+          console.warn("Unable to establish/check reviewer session; continuing with normal login.", reviewerError);
         }
 
         const supabase = getSupabaseBrowserClient();
