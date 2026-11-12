@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthenticatedUser } from "@/lib/serverAuth";
+import { getRequestIdentity } from "@/lib/serverAuth";
 
 export const dynamic = "force-dynamic";
 
@@ -16,8 +16,8 @@ function asSafeString(value: unknown) {
 }
 
 export async function POST(request: NextRequest) {
-  const user = await getAuthenticatedUser(request);
-  if (!user) {
+  const identity = await getRequestIdentity(request);
+  if (!identity) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
@@ -52,9 +52,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Missing conversation log fields." }, { status: 400 });
   }
 
-  const firstName = asSafeString(user.user_metadata?.first_name);
-  const lastName = asSafeString(user.user_metadata?.last_name);
-  const email = asSafeString(user.email);
+  const firstName = identity.kind === "reviewer"
+    ? "Reviewer"
+    : asSafeString(identity.user.user_metadata?.first_name);
+  const lastName = identity.kind === "reviewer"
+    ? ""
+    : asSafeString(identity.user.user_metadata?.last_name);
+  const email = identity.kind === "reviewer"
+    ? ""
+    : asSafeString(identity.user.email);
 
   try {
     const response = await fetch(webhookUrl, {

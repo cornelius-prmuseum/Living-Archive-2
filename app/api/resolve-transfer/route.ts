@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthenticatedUser } from "@/lib/serverAuth";
-import { canUserAccessAgent, getAccessRole } from "@/lib/accessControl";
+import { getRequestIdentity } from "@/lib/serverAuth";
+import { canIdentityAccessAgent, getAccessRoleForIdentity } from "@/lib/accessControl";
 import { isAgentSlug } from "@/lib/agents";
 import {
   getAgentIdForRole,
@@ -89,8 +89,8 @@ function getTargetAgentId(rule: unknown): string | null {
 }
 
 export async function GET(request: NextRequest) {
-  const user = await getAuthenticatedUser(request);
-  if (!user) {
+  const identity = await getRequestIdentity(request);
+  if (!identity) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
   const apiKey = process.env.ELEVENLABS_API_KEY;
@@ -98,7 +98,7 @@ export async function GET(request: NextRequest) {
   const agentNumberRaw = request.nextUrl.searchParams.get("agent_number") ?? "";
   const agentNumber = Number(agentNumberRaw);
 
-  if (!isAgentSlug(source) || !canUserAccessAgent(user, source, "visitor")) {
+  if (!isAgentSlug(source) || !canIdentityAccessAgent(identity, source, "visitor")) {
     return NextResponse.json({ error: "Unknown or disabled source agent." }, { status: 400 });
   }
 
@@ -106,7 +106,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Invalid transfer destination number." }, { status: 400 });
   }
 
-  const role = getAccessRole(user);
+  const role = getAccessRoleForIdentity(identity);
   const sourceAgentId = getAgentIdForRole(source, role);
   if (!apiKey || !sourceAgentId) {
     return NextResponse.json({ error: "Agent configuration is unavailable." }, { status: 503 });
@@ -136,7 +136,7 @@ export async function GET(request: NextRequest) {
     const targetAgentId = getTargetAgentId(rule);
     const slug = targetAgentId ? getAgentSlugById(targetAgentId) : null;
 
-    if (!slug || !canUserAccessAgent(user, slug, "visitor")) {
+    if (!slug || !canIdentityAccessAgent(identity, slug, "visitor")) {
       return NextResponse.json(
         { error: "The transfer destination is not mapped to an enabled PRMuseum agent." },
         { status: 404 },

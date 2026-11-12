@@ -1,4 +1,5 @@
 import type { User } from "@supabase/supabase-js";
+import type { RequestIdentity } from "@/lib/serverAuth";
 import {
   AGENT_ORDER,
   PUBLIC_AGENT_ORDER,
@@ -45,6 +46,10 @@ export function getAccessRole(user: User): AccessRole {
   if (educators.has(email)) return "educator";
 
   return "standard";
+}
+
+export function getAccessRoleForIdentity(identity: RequestIdentity): AccessRole {
+  return identity.kind === "reviewer" ? "standard" : getAccessRole(identity.user);
 }
 
 function parseSeconds(raw: string | undefined, fallback: number): number {
@@ -122,8 +127,7 @@ export function getAllowedDialogueAgentSlugs(role: AccessRole): AgentSlug[] {
   );
 }
 
-export function getAccessProfile(user: User): AccessProfile {
-  const role = getAccessRole(user);
+function getAccessProfileForRole(role: AccessRole): AccessProfile {
   const enabledAgentSlugs = getAllowedVisitorAgentSlugs(role);
   const dialogueAgentSlugs = getAllowedDialogueAgentSlugs(role);
   const globalRoundtable = (process.env.PRMUSEUM_AI_DIALOGUE_ENABLED || "")
@@ -141,8 +145,23 @@ export function getAccessProfile(user: User): AccessProfile {
   };
 }
 
+export function getAccessProfile(user: User): AccessProfile {
+  return getAccessProfileForRole(getAccessRole(user));
+}
+
+export function getAccessProfileForIdentity(identity: RequestIdentity): AccessProfile {
+  return getAccessProfileForRole(getAccessRoleForIdentity(identity));
+}
+
 export function canUserAccessAgent(user: User, slug: AgentSlug, mode: "visitor" | "dialogue") {
   const role = getAccessRole(user);
+  return mode === "dialogue"
+    ? getAllowedDialogueAgentSlugs(role).includes(slug)
+    : getAllowedVisitorAgentSlugs(role).includes(slug);
+}
+
+export function canIdentityAccessAgent(identity: RequestIdentity, slug: AgentSlug, mode: "visitor" | "dialogue") {
+  const role = getAccessRoleForIdentity(identity);
   return mode === "dialogue"
     ? getAllowedDialogueAgentSlugs(role).includes(slug)
     : getAllowedVisitorAgentSlugs(role).includes(slug);

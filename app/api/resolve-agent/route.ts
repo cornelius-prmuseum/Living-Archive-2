@@ -1,19 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthenticatedUser } from "@/lib/serverAuth";
-import { canUserAccessAgent } from "@/lib/accessControl";
+import { getRequestIdentity } from "@/lib/serverAuth";
+import { canIdentityAccessAgent } from "@/lib/accessControl";
 import { getAgentSlugById } from "@/lib/serverAgents";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const user = await getAuthenticatedUser(request);
-  if (!user) {
+  const identity = await getRequestIdentity(request);
+  if (!identity) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
   const agentId = request.nextUrl.searchParams.get("agent_id")?.trim() || "";
   const slug = getAgentSlugById(agentId);
 
-  if (!slug || !canUserAccessAgent(user, slug, "visitor")) {
+  if (!slug || !canIdentityAccessAgent(identity, slug, "visitor")) {
     return NextResponse.json({ error: "Unknown or unavailable agent." }, { status: 404 });
   }
 

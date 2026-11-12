@@ -1,0 +1,10 @@
+Living Archives v5.21 — Reviewer bypass link
+
+- Adds private reviewer access at /review#<PRMUSEUM_REVIEWER_ACCESS_KEY>.
+- Reviewer key is kept in the URL fragment, removed immediately, and exchanged for a secure HttpOnly cookie.
+- Reviewer bypass skips Supabase login but remains server-authorized.
+- Reviewer receives Standard/public access only (no staff-only personas or Historic Roundtable).
+- Reviewer conversations log First Name as "Reviewer" with blank last name/email.
+- Existing Google Sheets date/time, duration, Conversation ID, and Personality(ies) logging remains unchanged.
+- Reviewer session expires after 12 hours by default; configurable with PRMUSEUM_REVIEWER_SESSION_HOURS.
+- Changing PRMUSEUM_REVIEWER_ACCESS_KEY invalidates existing reviewer cookies.

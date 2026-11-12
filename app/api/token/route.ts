@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAgentSlug } from "@/lib/agents";
-import { getAuthenticatedUser } from "@/lib/serverAuth";
-import { canUserAccessAgent, getAccessRole } from "@/lib/accessControl";
+import { getRequestIdentity } from "@/lib/serverAuth";
+import { canIdentityAccessAgent, getAccessRoleForIdentity } from "@/lib/accessControl";
 import {
   getAgentIdForRole,
   getDialogueAgentIdForRole,
@@ -10,8 +10,8 @@ import {
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const user = await getAuthenticatedUser(request);
-  if (!user) {
+  const identity = await getRequestIdentity(request);
+  if (!identity) {
     return NextResponse.json({ error: "Authentication required." }, { status: 401 });
   }
 
@@ -23,11 +23,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unknown historical figure." }, { status: 400 });
   }
 
-  if (!canUserAccessAgent(user, requestedAgent, mode)) {
+  if (!canIdentityAccessAgent(identity, requestedAgent, mode)) {
     return NextResponse.json({ error: "That historical figure is not available for this account." }, { status: 403 });
   }
 
-  const role = getAccessRole(user);
+  const role = getAccessRoleForIdentity(identity);
   const agentId = mode === "dialogue"
     ? getDialogueAgentIdForRole(requestedAgent, role)
     : getAgentIdForRole(requestedAgent, role);

@@ -14,9 +14,10 @@ import type { Session, User } from "@supabase/supabase-js";
 import { getSupabaseBrowserClient } from "@/lib/supabaseClient";
 
 type AuthContextValue = {
-  session: Session;
-  user: User;
-  accessToken: string;
+  session: Session | null;
+  user: User | null;
+  accessToken: string | null;
+  isReviewer: boolean;
   authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   signOut: () => Promise<void>;
 };
@@ -33,6 +34,7 @@ type AuthMode = "login" | "signup";
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
+  const [reviewer, setReviewer] = useState(false);
   const [loading, setLoading] = useState(true);
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
@@ -48,31 +50,48 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let active = true;
-    try {
-      const supabase = getSupabaseBrowserClient();
-      void supabase.auth.getSession().then(({ data }) => {
+    let unsubscribe: (() => void) | null = null;
+
+    void (async () => {
+      try {
+        try {
+          const reviewerResponse = await fetch("/api/reviewer-session", { cache: "no-store" });
+          if (reviewerResponse.ok) {
+            const reviewerData = await reviewerResponse.json() as { reviewer?: boolean };
+            if (!active) return;
+            if (reviewerData.reviewer) {
+              setReviewer(true);
+              setLoading(false);
+              return;
+            }
+          }
+        } catch (reviewerError) {
+          console.warn("Unable to check reviewer session; continuing with normal login.", reviewerError);
+        }
+
+        const supabase = getSupabaseBrowserClient();
+        const { data } = await supabase.auth.getSession();
         if (!active) return;
         setSession(data.session);
         setLoading(false);
-      });
 
-      const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+        const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+          if (!active) return;
+          setSession(nextSession);
+          setLoading(false);
+        });
+        unsubscribe = () => listener.subscription.unsubscribe();
+      } catch (authError) {
         if (!active) return;
-        setSession(nextSession);
+        setConfigurationError(authError instanceof Error ? authError.message : "Authentication is not configured.");
         setLoading(false);
-      });
+      }
+    })();
 
-      return () => {
-        active = false;
-        listener.subscription.unsubscribe();
-      };
-    } catch (authError) {
-      setConfigurationError(authError instanceof Error ? authError.message : "Authentication is not configured.");
-      setLoading(false);
-      return () => {
-        active = false;
-      };
-    }
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
   }, []);
 
   const resetMessages = () => {
@@ -151,25 +170,43 @@ export function AuthGate({ children }: { children: ReactNode }) {
   };
 
   const authValue = useMemo<AuthContextValue | null>(() => {
+    if (reviewer) {
+      const authFetch: AuthContextValue["authFetch"] = (input, init = {}) =>
+        fetch(input, { ...init, credentials: "same-origin" });
+
+      return {
+        session: null,
+        user: null,
+        accessToken: null,
+        isReviewer: true,
+        authFetch,
+        signOut: async () => {
+          await fetch("/api/reviewer-session", { method: "DELETE", cache: "no-store" });
+          window.location.replace("/");
+        },
+      };
+    }
+
     if (!session?.user || !session.access_token) return null;
 
     const authFetch: AuthContextValue["authFetch"] = (input, init = {}) => {
       const headers = new Headers(init.headers || {});
       headers.set("Authorization", `Bearer ${session.access_token}`);
-      return fetch(input, { ...init, headers });
+      return fetch(input, { ...init, headers, credentials: "same-origin" });
     };
 
     return {
       session,
       user: session.user,
       accessToken: session.access_token,
+      isReviewer: false,
       authFetch,
       signOut: async () => {
         const supabase = getSupabaseBrowserClient();
         await supabase.auth.signOut();
       },
     };
-  }, [session]);
+  }, [reviewer, session]);
 
   if (loading) {
     return (
@@ -320,7 +357,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     <AuthContext.Provider value={authValue}>
       <div className="authenticated-app-shell">
         <button className="auth-signout" type="button" onClick={() => void authValue.signOut()}>
-          Sign out
+          {authValue.isReviewer ? "Exit reviewer" : "Sign out"}
         </button>
         {children}
       </div>

@@ -1,5 +1,10 @@
 import { createClient, type User } from "@supabase/supabase-js";
 import type { NextRequest } from "next/server";
+import { isReviewerRequest } from "@/lib/reviewerAccess";
+
+export type RequestIdentity =
+  | { kind: "user"; user: User }
+  | { kind: "reviewer" };
 
 export async function getAuthenticatedUser(request: NextRequest): Promise<User | null> {
   const authorization = request.headers.get("authorization") || "";
@@ -23,4 +28,11 @@ export async function getAuthenticatedUser(request: NextRequest): Promise<User |
   const { data, error } = await supabase.auth.getUser(token);
   if (error || !data.user) return null;
   return data.user;
+}
+
+export async function getRequestIdentity(request: NextRequest): Promise<RequestIdentity | null> {
+  const user = await getAuthenticatedUser(request);
+  if (user) return { kind: "user", user };
+  if (isReviewerRequest(request)) return { kind: "reviewer" };
+  return null;
 }
