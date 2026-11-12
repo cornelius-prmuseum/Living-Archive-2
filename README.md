@@ -36,10 +36,3 @@ GOOGLE_SHEETS_WEBHOOK_SECRET=
 ```
 
 The Google Apps Script source is included at `google-apps-script/Code.gs`.
-
-
-## v5.20 role-based access
-
-The Supabase login now supports server-side email whitelists for **Museum Staff** and **Educator** access. Standard users remain on the original four-persona experience. Museum Staff can additionally access Inez Y. Kaiser, Marilyn Laurie, Doris Fleischman, Museum Docent, and the Historic Roundtable. Educators currently use the standard persona set but can have their own maximum conversation duration.
-
-See `.env.example` and `AUTH-AND-GOOGLE-SHEETS-SETUP.md` for the whitelist, persona-ID, and role-specific session-limit variables.
